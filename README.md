@@ -1,12 +1,12 @@
 # build-control
 Proof-of-concept and framework for pervasive computing
 
-Protocol:
+## Protocol:
 
 - the controller is the server
 when you want to control a build program, you pass
-BUILDCONTROLADDR=<socket addr>
-BUILDTOKEN=<unique hash>
+BUILDCONTROLADDR=socket-addr
+BUILDTOKEN=unique-hash
 
 The socket address can be a local path (unix domain)
 or a servername[:service] to be resolved by getaddrinfo
@@ -17,7 +17,7 @@ back the hash to identify itself
 - whenever the controller wants to change the number of jobs,
 it passes back the desired number of jobs.
 
-Why this complexity:
+## Why this complexity:
 
 - we want to be able to control every build on a cluster for a program
 like dpb(1), so the address may need to be tcp.
@@ -28,7 +28,7 @@ like dpb(1), so the address may need to be tcp.
 Having the exact same build token means that the server will tell each client
 for a given hash at the same time.
 
-Ending:
+## Ending:
 
 - when the build program finishes, the connection to the server is 
 automatically closed, which is when the server can garbage collect the hash
