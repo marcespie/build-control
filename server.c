@@ -23,8 +23,49 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <ohash.h>
 
 #define HASHLENGTH 24
+
+#define ARRAYINITSIZE 64
+#define HASHINITSIZE 64
+
+
+struct builder {
+	char hash[HASHLENGTH+1];
+	bool is_command;
+	size_t jobs;
+	size_t refcount;
+};
+
+struct pollfd *array;
+struct builder *array_mirror;
+size_t sz;
+size_t capacity;
+
+struct ohash builder_hash;
+
+void *
+my_calloc(size_t n, size_t m, void *unused)
+{
+	return calloc(n, m);
+}
+
+void 
+my_free(void *p, void *unused)
+{
+	free(p);
+}
+
+void *
+my_alloc(size_t n, void *unused)
+{
+	return malloc(n);
+}
+
 
 
 int 
@@ -114,6 +155,18 @@ genhash()
 	return r;
 }
 
+void 
+init_builder_hash()
+{
+	struct ohash_info builder = {
+	    .key_offset = 0,
+	    .data = NULL,
+	    .calloc = my_calloc,
+	    .free = my_free,
+	    .alloc = my_alloc 
+	};
+	ohash_init(&builder_hash, HASHINITSIZE, &builder);
+}
 
 int
 main(int argc, char *argv[])

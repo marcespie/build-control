@@ -1,0 +1,2 @@
+LIBS=-lutil
+LDFLAGS=-lutil
