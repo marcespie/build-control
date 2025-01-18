@@ -1,7 +1,3 @@
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netdb.h>
 /*
  * Copyright (c) 2025 Marc Espie <espie@openbsd.org>
  * 
@@ -18,11 +14,18 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netdb.h>
+#include <stdio.h>
 #include <err.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
+
+#define HASHLENGTH 24
+
 
 int 
 create_local_server(const char *name)
@@ -95,6 +98,21 @@ create_server(const char *name)
 	return fd;
 }
 
+char *
+genhash()
+{
+	unsigned char binary[HASHLENGTH/2];
+	size_t i;
+	char *r = malloc(HASHLENGTH+1);
+
+	arc4random_buf(binary, sizeof(binary));
+	for (i = 0; i != HASHLENGTH; i++) {
+		r[i] = "0123456789abcdef"
+		    [i % 2 == 0 ? (binary[i/2] & 0xf) : (binary[i/2] >>4U)];
+	}
+	r[i] = 0;
+	return r;
+}
 
 
 int
@@ -104,5 +122,7 @@ main(int argc, char *argv[])
 		errx(1, "usage: build-control socketaddr");
 	int fd = create_server(argv[1]);
 
-
+	printf("Hash token is %s\n", genhash());
 }
+
+
