@@ -28,6 +28,12 @@ like dpb(1), so the address may need to be tcp.
 Having the exact same build token means that the server will tell each client
 for a given hash at the same time.
 
+## Optimization:
+
+- the hash takes the former number-hash, where number is the project
+number, just so you don't actually have to look-up a hash, it's just there
+as a security measure.
+
 ## Ending:
 
 - when the build program finishes, the connection to the server is 

@@ -26,7 +26,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <ohash.h>
+#include <poll.h>
 
 #define HASHLENGTH 24
 
@@ -43,10 +43,26 @@ struct builder {
 
 struct pollfd *array;
 struct builder *array_mirror;
+
 size_t sz;
+size_t servers;
 size_t capacity;
 
-struct ohash builder_hash;
+void
+grow_array()
+{
+	while (capacity <= sz) {
+		if (capacity == 0)
+			capacity = ARRAYINITSIZE;
+		else
+			capacity *= 2;
+	}
+	array = reallocarray(array, capacity, sizeof(struct pollfd));
+	if (!array)
+		errx(1, "out of memory");
+}
+
+#define ensure_array() do { if (sz == capacity) grow_array(); } while (0)
 
 void *
 my_calloc(size_t n, size_t m, void *unused)
@@ -68,7 +84,7 @@ my_alloc(size_t n, void *unused)
 
 
 
-int 
+void 
 create_local_server(const char *name)
 {
 	struct sockaddr_un addr;
@@ -83,10 +99,11 @@ create_local_server(const char *name)
 	if (bind(s, (const struct sockaddr *)&addr, sizeof(addr)) == -1)
 		errx(1, "coulnd't bind %s", name);
 
-	return s;
+	ensure_array();
+	array[sz++].fd = s;
 }
 
-int
+void
 create_inet_server(const char *server, const char *service)
 {
 	struct addrinfo hints, *res, *res0;
@@ -109,18 +126,16 @@ create_inet_server(const char *server, const char *service)
 			close(s);
 			continue;
 		}
+		ensure_array();
+		array[sz++].fd = s;
 	}
-	if (s == -1)
-		errx(1, "couldn't bind server for %s", server);
-	return s;
 }
 
-int
-create_server(const char *name)
+void
+create_servers(const char *name)
 {
-	int fd = -1;
 	if (strchr(name, '/')) {
-		fd = create_local_server(name);
+		create_local_server(name);
 	} else {
 		char *pos = strchr(name, ':');
 		if (pos != NULL) {
@@ -130,13 +145,12 @@ create_server(const char *name)
 				err(1, "out of memory");
 			memcpy(server, name, len);
 			server[len] = 0;
-			fd = create_inet_server(server, pos+1);
+			create_inet_server(server, pos+1);
 			free(server);
 		} else {
-			fd = create_inet_server(name, 0);
+			create_inet_server(name, 0);
 		}
 	}
-	return fd;
 }
 
 char *
@@ -155,25 +169,18 @@ genhash()
 	return r;
 }
 
-void 
-init_builder_hash()
-{
-	struct ohash_info builder = {
-	    .key_offset = 0,
-	    .data = NULL,
-	    .calloc = my_calloc,
-	    .free = my_free,
-	    .alloc = my_alloc 
-	};
-	ohash_init(&builder_hash, HASHINITSIZE, &builder);
-}
 
 int
 main(int argc, char *argv[])
 {
-	if (argc != 2)
-		errx(1, "usage: build-control socketaddr");
-	int fd = create_server(argv[1]);
+	int i;
+
+	if (argc < 2)
+		errx(1, "usage: build-control socketaddr...");
+	for (i = 1; i != argc; i++)
+		create_servers(argv[i]);
+
+	servers = sz;
 
 	printf("Hash token is %s\n", genhash());
 }

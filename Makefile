@@ -1,2 +1,4 @@
-LIBS=-lutil
-LDFLAGS=-lutil
+all:	server
+
+.PHONY: server
+	
