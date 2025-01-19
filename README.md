@@ -28,11 +28,30 @@ like dpb(1), so the address may need to be tcp.
 Having the exact same build token means that the server will tell each client
 for a given hash at the same time.
 
+## Security vs simplicity
+
+- maybe just passing BUILDCONTROLADDR should be enough ? when the
+first client connects, he passes back the number of jobs and requests an ID.
+The server logs that in, and further clients use the same hash for number
+of jobs (appropriate for make).
+
+- complex stuff like gmake with on-the-board allocation will require a bit
+of work.  Now anything which manages its own jobs will require a bit of work.
+Essentially, we often have a queue of free jobs, so when the job number
+increases, we just need to allocate more free jobs and trigger job allocation.
+When the job number decreases, we just need to mark finished jobs for garbage
+collection. In all, if the number of jobs was implicit it needs to become
+explicit.
+
+- we will always exchange the current number of jobs, and not deltas,
+because if we ever run over an unreliable medium (say udp), deltas would
+be ill-advised. They're also way more vulnerable to any kind of attack.
+
 ## Optimization:
 
-- the hash takes the former number-hash, where number is the project
-number, just so you don't actually have to look-up a hash, it's just there
-as a security measure.
+- the hash follows the pattern number-hash, where number is the project
+number, just so you don't actually have to look-up a hash, the hash is
+verified on connection as a basic security measure.
 
 ## Ending:
 
@@ -56,6 +75,6 @@ you to use your work station interactively.
 But when you step away/go home in the evenings, you may wish to use the full
 power of your work station to keep building.
 
-Programs like make or ninja have (mostly) fast turn-arounds: a compile jobs
+Programs like make or ninja have (mostly) fast turn-arounds: a compile job
 rarely takes more than a few minutes (helloooo C++) and so the load-average
 difference should happen really fast.
