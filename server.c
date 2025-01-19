@@ -64,25 +64,12 @@ grow_array()
 
 #define ensure_array() do { if (sz == capacity) grow_array(); } while (0)
 
-void *
-my_calloc(size_t n, size_t m, void *unused)
+void
+register_server(int s)
 {
-	return calloc(n, m);
+	ensure_array();
+	array[sz++].fd = s;
 }
-
-void 
-my_free(void *p, void *unused)
-{
-	free(p);
-}
-
-void *
-my_alloc(size_t n, void *unused)
-{
-	return malloc(n);
-}
-
-
 
 void 
 create_local_server(const char *name)
@@ -97,10 +84,9 @@ create_local_server(const char *name)
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
 
 	if (bind(s, (const struct sockaddr *)&addr, sizeof(addr)) == -1)
-		errx(1, "coulnd't bind %s", name);
+		errx(1, "couldn't bind %s", name);
 
-	ensure_array();
-	array[sz++].fd = s;
+	register_server(s);
 }
 
 void
@@ -126,8 +112,7 @@ create_inet_server(const char *server, const char *service)
 			close(s);
 			continue;
 		}
-		ensure_array();
-		array[sz++].fd = s;
+		register_server(s);
 	}
 }
 
