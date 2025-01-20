@@ -93,11 +93,11 @@ emalloc(size_t sz)
 }
 
 char *
-genhash()
+genhash(void)
 {
 	unsigned char binary[HASHLENGTH/2];
 	size_t i;
-	char *r = malloc(HASHLENGTH+1);
+	char *r = emalloc(HASHLENGTH+1);
 
 	arc4random_buf(binary, sizeof(binary));
 	for (i = 0; i != HASHLENGTH; i++) {
@@ -109,7 +109,7 @@ genhash()
 }
 
 struct builder *
-new_builder()
+new_builder(void)
 {
 	struct builder *b;
 	builder_array = may_grow_array(&builders);
@@ -125,6 +125,10 @@ struct fdstate *
 new_fdstate(int fd)
 {
 	struct fdstate *state;
+
+	fd_array = may_grow_array(&fds);
+	fd_array[fds.size].fd = fd;
+	fd_array[fds.size++].events = POLLIN|POLLHUP;
 
 	if (fd2s.size < fd)
 		fd2s.size = fd;
@@ -142,9 +146,6 @@ void
 register_server(int s)
 {
 	struct fdstate *state;
-
-	fd_array = may_grow_array(&fds);
-	fd_array[fds.size++].fd = s;
 
 	state = new_fdstate(s);
 	state->is_server = true;
@@ -234,6 +235,8 @@ main(int argc, char *argv[])
 {
 	int i;
 	struct builder *b;
+	struct fdstate *state;
+	size_t j;
 
 	if (argc < 2)
 		errx(1, "usage: build-control socketaddr...");
@@ -241,8 +244,32 @@ main(int argc, char *argv[])
 		create_servers(argv[i]);
 
 	b = new_builder();
+	state = new_fdstate(0);
+	state->is_server = false;
+	state->is_leggit = true;
+	state->builder = b;
 
 	printf("Use 0-%s to connect\n", b->hash);
+
+	while (1) {
+		size_t j;
+		int n = poll(fd_array, fds.size, INFTIM);
+
+		if (n == -1)
+			err(1, "poll");
+		for (j = 0; j != fds.size; j++) {
+			if (fd_array[j].revents == 0)
+				continue;
+			printf("Data on fd %d\n", fd_array[j].fd);
+			state = fd2state[fd_array[j].fd];
+			printf("State is %lx %d %d\n", 
+			    state->builder, state->is_server, state->is_leggit);
+
+			if (--n == 0)
+				break;
+		}
+		exit(0);
+	}
 }
 
 
