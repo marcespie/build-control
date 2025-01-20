@@ -38,18 +38,20 @@
 
 
 struct builder {
-	char hash[HASHLENGTH+1];
-	bool is_command;
+	char *hash;
 	size_t jobs;
 	size_t refcount;
 };
 
 struct fdstate {
 	struct builder *builder;
+	bool is_server;
+	bool is_leggit;
 };
+
 struct pollfd *fd_array;
-struct builder *builder_array;
-struct fdstate *fd2state;
+struct builder **builder_array;
+struct fdstate **fd2state;
 
 struct garray {
 	size_t element_size;
@@ -59,17 +61,11 @@ struct garray {
 } fds = {
 	.element_size = sizeof(struct pollfd)
     }, builders = {
-	.element_size = sizeof(struct builder)
+	.element_size = sizeof(struct builder *)
     }, fd2s = {
-	.element_size = sizeof(struct fdstate)
+	.element_size = sizeof(struct fdstate *)
     };
 
-
-
-size_t sz;
-size_t servers;
-size_t capacity;
-size_t maxfd;
 
 void *
 may_grow_array(struct garray *a)
@@ -87,12 +83,72 @@ may_grow_array(struct garray *a)
 	return a->pointer;
 }
 
+void *
+emalloc(size_t sz)
+{
+	void *p = malloc(sz);
+	if (!p)
+		errx(1, "out of memory");
+	return p;
+}
+
+char *
+genhash()
+{
+	unsigned char binary[HASHLENGTH/2];
+	size_t i;
+	char *r = malloc(HASHLENGTH+1);
+
+	arc4random_buf(binary, sizeof(binary));
+	for (i = 0; i != HASHLENGTH; i++) {
+		r[i] = "0123456789abcdef"
+		    [i % 2 == 0 ? (binary[i/2] & 0xf) : (binary[i/2] >>4U)];
+	}
+	r[i] = 0;
+	return r;
+}
+
+struct builder *
+new_builder()
+{
+	struct builder *b;
+	builder_array = may_grow_array(&builders);
+
+	b = emalloc(sizeof(struct builder));
+	b->hash = genhash();
+	builder_array[builders.size++] = b;
+
+	return b;
+}
+
+struct fdstate *
+new_fdstate(int fd)
+{
+	struct fdstate *state;
+
+	if (fd2s.size < fd)
+		fd2s.size = fd;
+	fd2state = may_grow_array(&fd2s);
+
+	state = emalloc(sizeof(struct fdstate));
+
+	fd2state[fd] = state;
+
+	return state;
+}
+
 
 void
 register_server(int s)
 {
+	struct fdstate *state;
+
 	fd_array = may_grow_array(&fds);
-	fd_array[sz++].fd = s;
+	fd_array[fds.size++].fd = s;
+
+	state = new_fdstate(s);
+	state->is_server = true;
+	state->builder = NULL;
 }
 
 void 
@@ -172,36 +228,21 @@ create_servers(const char *name)
 	}
 }
 
-char *
-genhash()
-{
-	unsigned char binary[HASHLENGTH/2];
-	size_t i;
-	char *r = malloc(HASHLENGTH+1);
-
-	arc4random_buf(binary, sizeof(binary));
-	for (i = 0; i != HASHLENGTH; i++) {
-		r[i] = "0123456789abcdef"
-		    [i % 2 == 0 ? (binary[i/2] & 0xf) : (binary[i/2] >>4U)];
-	}
-	r[i] = 0;
-	return r;
-}
-
 
 int
 main(int argc, char *argv[])
 {
 	int i;
+	struct builder *b;
 
 	if (argc < 2)
 		errx(1, "usage: build-control socketaddr...");
 	for (i = 1; i != argc; i++)
 		create_servers(argv[i]);
 
-	servers = sz;
+	b = new_builder();
 
-	printf("Hash token is %s\n", genhash());
+	printf("Use 0-%s to connect\n", b->hash);
 }
 
 
