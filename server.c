@@ -16,6 +16,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <netdb.h>
 #include <stdio.h>
@@ -27,11 +28,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <poll.h>
+#include <errno.h>
 
 #define HASHLENGTH 24
 
 #define ARRAYINITSIZE 64
 #define HASHINITSIZE 64
+#define BACKLOG 128
 
 
 struct builder {
@@ -41,34 +44,55 @@ struct builder {
 	size_t refcount;
 };
 
-struct pollfd *array;
-struct builder *array_mirror;
+struct fdstate {
+	struct builder *builder;
+};
+struct pollfd *fd_array;
+struct builder *builder_array;
+struct fdstate *fd2state;
+
+struct garray {
+	size_t element_size;
+	size_t size;
+	size_t capacity;
+	void *pointer;
+} fds = {
+	.element_size = sizeof(struct pollfd)
+    }, builders = {
+	.element_size = sizeof(struct builder)
+    }, fd2s = {
+	.element_size = sizeof(struct fdstate)
+    };
+
+
 
 size_t sz;
 size_t servers;
 size_t capacity;
+size_t maxfd;
 
-void
-grow_array()
+void *
+may_grow_array(struct garray *a)
 {
-	while (capacity <= sz) {
-		if (capacity == 0)
-			capacity = ARRAYINITSIZE;
-		else
-			capacity *= 2;
+	if (a->capacity <= a->size) {
+		if (a->capacity == 0)
+			a->capacity = ARRAYINITSIZE;
+		else while (a->capacity <= a->size)
+			a->capacity *= 2;
+		a->pointer = reallocarray(a->pointer, 
+		    a->capacity, a->element_size);
 	}
-	array = reallocarray(array, capacity, sizeof(struct pollfd));
-	if (!array)
+	if (!a->pointer)
 		errx(1, "out of memory");
+	return a->pointer;
 }
 
-#define ensure_array() do { if (sz == capacity) grow_array(); } while (0)
 
 void
 register_server(int s)
 {
-	ensure_array();
-	array[sz++].fd = s;
+	fd_array = may_grow_array(&fds);
+	fd_array[sz++].fd = s;
 }
 
 void 
@@ -81,10 +105,18 @@ create_local_server(const char *name)
 	addr.sun_family = AF_UNIX;
 	strlcpy(addr.sun_path, name, sizeof(addr.sun_path));
 
+	if (unlink(name) == -1 && errno != ENOENT)
+		err(1, "can't remove %s", name);
+
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
 
 	if (bind(s, (const struct sockaddr *)&addr, sizeof(addr)) == -1)
 		errx(1, "couldn't bind %s", name);
+
+	if (chmod(name, 0700) == -1)
+		err(1, "can't chmod %s", name);
+	if (listen(s, BACKLOG) == -1)
+		err(1, "listen(%s)", name);
 
 	register_server(s);
 }
@@ -112,6 +144,8 @@ create_inet_server(const char *server, const char *service)
 			close(s);
 			continue;
 		}
+		if (listen(s, BACKLOG) == -1)
+			err(1, "listen(%s)", server);
 		register_server(s);
 	}
 }
