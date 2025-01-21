@@ -45,7 +45,7 @@
  */
 struct builder {
 	char *hash;
-	size_t jobs;
+	long jobs;
 	size_t refcount;
 };
 
@@ -155,8 +155,8 @@ fdprintf(int fd, const char *fmt, ...)
 	char buffer[1024];
 	va_list ap;
 	int n;
-	va_start(ap, fmt);
 
+	va_start(ap, fmt);
 	n = vsnprintf(buffer, sizeof buffer, fmt, ap);
 	write(fd, buffer, n);
 	va_end(ap);
@@ -353,7 +353,7 @@ dispatch_new_jobs(struct builder *b, char *jobs)
 	for (i = 0; i != fds.size; i++) {
 		int s = fd_array[i].fd;
 		if (builder_array[fd2state[s]->builder_number] == b)
-			fdprintf(s, "%s\r\n", l);
+			fdprintf(s, "%ld\r\n", l);
 	}
 }
 
@@ -399,6 +399,8 @@ handle_event(int fd, int events)
 			goto error;
 		state->builder_number = number;
 		state->is_leggit = true;
+		if (b->jobs != 0)
+			fdprintf(fd, "%ld\r\n", b->jobs);
 		if (debug)
 			printf("Connection registered\n");
 		b->refcount++;
@@ -406,12 +408,9 @@ handle_event(int fd, int events)
 		int fdout = fd == 0 ? 1 : fd;
 		char *line = retrieve_line(fd);
 		if (strcmp(line, "new") == 0) {
-			char buffer[1024];
 			number = new_builder();
 			b = builder_array[number];
-			write(fdout, buffer, 
-			    snprintf(buffer, sizeof buffer, "%zd-%s\n",
-				number, b->hash));
+			fdprintf(fdout, "%zd-%s\n", number, b->hash);
 		} else if (strcmp(line, "quit") == 0) {
 			if (fdout == 1)
 				exit(0);
