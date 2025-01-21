@@ -230,6 +230,11 @@ create_servers(const char *name)
 }
 
 void
+gc(int fd)
+{
+}
+
+void
 handle_event(int fd, int events)
 {
 	struct fdstate *state;
@@ -250,9 +255,31 @@ handle_event(int fd, int events)
 	} else if (!state->is_leggit) {
 		ssize_t n;
 		char buffer[1024];
-		n = read(fd, buffer, sizeof buffer);
-	}
+		n = read(fd, buffer, sizeof buffer - 1);
+		if (n < 2)
+			goto error;
+		buffer[n] = 0;
+		char *dash = strchr(buffer, '-');
+		if (!dash) 
+			goto error;
+		*dash = 0;
+		char *end;
+		long l = strtol(buffer, &end, 10);
 
+		if (l >= builders.size)
+			goto error;
+		struct builder *b = builder_array[l];
+		while (n > 0 && buffer[n-1] == '\r' || buffer[n-1] == '\n')
+			buffer[--n] = 0;
+		if (strcmp(dash+1, b->hash) != 0)
+			goto error;
+		state->builder = b;
+		state->is_leggit = true;
+	}
+	return;
+error:
+	close(fd);
+	gc(fd);
 }
 
 int
