@@ -246,14 +246,29 @@ retrieve_line(int fd)
 {
 	ssize_t n;
 	static char buffer[1024];
+	char *result;
 
 	n = read(fd, buffer, sizeof buffer - 1);
 	if (n < 2)
 		return NULL;
 	buffer[n] = 0;
-	while (n > 0 && (buffer[n-1] == '\r' || buffer[n-1] == '\n'))
+	while (n > 0 && strchr("\r\n \t", buffer[n-1]))
 		buffer[--n] = 0;
-	return buffer;
+	result = buffer;
+	while (strchr("\t ", *result))
+		result++;
+	return result;
+}
+
+struct builder *
+find_builder(char *id)
+{
+	char *end;
+	long l = strtol(id, &end, 10);
+
+	if (l >= builders.size || l < 0)
+		return NULL;
+	return builder_array[l];
 }
 
 void
@@ -286,12 +301,9 @@ handle_event(int fd, int events)
 		if (!dash) 
 			goto error;
 		*dash = 0;
-		char *end;
-		long l = strtol(line, &end, 10);
-
-		if (l >= builders.size || l < 0)
+		struct builder *b = find_builder(line);
+		if (!b)
 			goto error;
-		struct builder *b = builder_array[l];
 		if (strcmp(dash+1, b->hash) != 0)
 			goto error;
 		state->builder = b;
