@@ -281,6 +281,21 @@ find_builder(char *id)
 }
 
 void
+dispatch_new_jobs(struct builder *b, char *jobs)
+{
+	char buffer[1024];
+	int n;
+	size_t i;
+
+	n = snprintf(buffer, sizeof buffer, "%s\r\n", jobs);
+	for (i = 0; i != fds.size; i++) {
+		int s = fd_array[i].fd;
+		if (fd2state[s]->builder == b)
+			write(s, buffer, n);
+	}
+}
+
+void
 handle_event(int fd, int events)
 {
 	struct fdstate *state;
@@ -346,8 +361,12 @@ handle_event(int fd, int events)
 			number = find_builder(line);
 			if (number != -1)
 				printf("Found builder %zd\n", number);
-			else 
+			else  {
 				printf("Builder not found\n");
+				return;
+			}
+			b = builder_array[number];
+			dispatch_new_jobs(b, pos+1);
 		}
 	}
 	return;
