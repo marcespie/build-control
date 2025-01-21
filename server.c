@@ -22,6 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -74,7 +75,7 @@ struct pollfd *fd_array;
  * the actual server sockets
  */
 struct fdstate {
-	struct builder *builder;
+	long builder_number;
 	bool is_server;
 	bool is_leggit;
 };
@@ -148,6 +149,19 @@ genhash(void)
 	return r;
 }
 
+void
+fdprintf(int fd, const char *fmt, ...)
+{
+	char buffer[1024];
+	va_list ap;
+	int n;
+	va_start(ap, fmt);
+
+	n = vsnprintf(buffer, sizeof buffer, fmt, ap);
+	write(fd, buffer, n);
+	va_end(ap);
+}
+
 /* XXX returning the index instead of the builder
  * allows us easy access to the index, instead of
  * having to store it inside the builder structure
@@ -211,7 +225,7 @@ register_server(int s)
 
 	state = new_fdstate(s);
 	state->is_server = true;
-	state->builder = NULL;
+	state->builder_number = -1;
 }
 
 void 
@@ -329,15 +343,17 @@ find_builder(char *id)
 void
 dispatch_new_jobs(struct builder *b, char *jobs)
 {
-	char buffer[1024];
-	int n;
 	size_t i;
+	char *end;
+	long l = strtol(jobs, &end, 10);
+	if (l < 0)
+		return;
+	b->jobs = l;
 
-	n = snprintf(buffer, sizeof buffer, "%s\r\n", jobs);
 	for (i = 0; i != fds.size; i++) {
 		int s = fd_array[i].fd;
-		if (fd2state[s]->builder == b)
-			write(s, buffer, n);
+		if (builder_array[fd2state[s]->builder_number] == b)
+			fdprintf(s, "%s\r\n", l);
 	}
 }
 
@@ -360,7 +376,7 @@ handle_event(int fd, int events)
 		int s = accept(fd, (struct sockaddr *)&addr, &len);
 
 		state2 = new_fdstate(s);
-		state2->builder = NULL;
+		state2->builder_number = -1;
 		state2->is_server = false;
 		state2->is_leggit = false;
 	} else if (!state->is_leggit) {
@@ -381,12 +397,12 @@ handle_event(int fd, int events)
 			goto error;
 		if (strcmp(dash+1, b->hash) != 0)
 			goto error;
-		state->builder = b;
+		state->builder_number = number;
 		state->is_leggit = true;
 		if (debug)
 			printf("Connection registered\n");
-		state->builder->refcount++;
-	} else if (state->builder == builder_array[0]) {
+		b->refcount++;
+	} else if (state->builder_number == 0) {
 		int fdout = fd == 0 ? 1 : fd;
 		char *line = retrieve_line(fd);
 		if (strcmp(line, "new") == 0) {
@@ -452,9 +468,9 @@ main(int argc, char *argv[])
 	state = new_fdstate(0);
 	state->is_server = false;
 	state->is_leggit = true;
-	state->builder = builder_array[number];
+	state->builder_number = number;
 
-	printf("0-%s to connect\n", state->builder->hash);
+	printf("0-%s to connect\n", builder_array[number]->hash);
 
 	while (1) {
 		size_t j;
