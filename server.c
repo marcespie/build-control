@@ -14,21 +14,21 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
-#include <netdb.h>
-#include <stdio.h>
 #include <err.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdlib.h>
+#include <errno.h>
+#include <netdb.h>
+#include <poll.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
-#include <poll.h>
-#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #define HASHLENGTH 24
 
@@ -66,6 +66,7 @@ struct garray {
 	.element_size = sizeof(struct fdstate *)
     };
 
+bool debug;
 
 void *
 may_grow_array(struct garray *a)
@@ -141,6 +142,12 @@ new_fdstate(int fd)
 	return state;
 }
 
+void
+usage(void)
+{
+	fprintf(stderr, "Usage: build-server [-d] socket ...\n");
+	exit(0);
+}
 
 void
 register_server(int s)
@@ -234,6 +241,21 @@ gc(int fd)
 {
 }
 
+char *
+retrieve_line(int fd)
+{
+	ssize_t n;
+	static char buffer[1024];
+
+	n = read(fd, buffer, sizeof buffer - 1);
+	if (n < 2)
+		return NULL;
+	buffer[n] = 0;
+	while (n > 0 && (buffer[n-1] == '\r' || buffer[n-1] == '\n'))
+		buffer[--n] = 0;
+	return buffer;
+}
+
 void
 handle_event(int fd, int events)
 {
@@ -242,39 +264,40 @@ handle_event(int fd, int events)
 	state = fd2state[fd];
 
 	if (state->is_server) {
+		if (debug)
+			printf("Server connection\n");
 		struct sockaddr_storage addr;
 		socklen_t len = sizeof(addr);
 		struct fdstate *state2;
 
 		int s = accept(fd, (struct sockaddr *)&addr, &len);
 
-		state2 = new_fdstate(fd);
+		state2 = new_fdstate(s);
 		state2->builder = NULL;
 		state2->is_server = false;
 		state2->is_leggit = false;
 	} else if (!state->is_leggit) {
-		ssize_t n;
-		char buffer[1024];
-		n = read(fd, buffer, sizeof buffer - 1);
-		if (n < 2)
+		if (debug)
+			printf("Line from client\n");
+		char *line = retrieve_line(fd);
+		if (!line)
 			goto error;
-		buffer[n] = 0;
-		char *dash = strchr(buffer, '-');
+		char *dash = strchr(line, '-');
 		if (!dash) 
 			goto error;
 		*dash = 0;
 		char *end;
-		long l = strtol(buffer, &end, 10);
+		long l = strtol(line, &end, 10);
 
-		if (l >= builders.size)
+		if (l >= builders.size || l < 0)
 			goto error;
 		struct builder *b = builder_array[l];
-		while (n > 0 && buffer[n-1] == '\r' || buffer[n-1] == '\n')
-			buffer[--n] = 0;
 		if (strcmp(dash+1, b->hash) != 0)
 			goto error;
 		state->builder = b;
 		state->is_leggit = true;
+		if (debug)
+			printf("Connection registered\n");
 	}
 	return;
 error:
@@ -288,7 +311,19 @@ main(int argc, char *argv[])
 	int i;
 	struct builder *b;
 	struct fdstate *state;
-	size_t j;
+	int ch;
+
+	while ((ch = getopt(argc, argv, "d")) != -1) {
+		switch(ch) {
+		case 'd':
+			debug = true;
+			break;
+		default:
+			usage();
+		}
+	}
+	argc -= optind;
+	argv += optind;
 
 	if (argc < 2)
 		errx(1, "usage: build-control socketaddr...");
@@ -317,7 +352,6 @@ main(int argc, char *argv[])
 			if (--n == 0)
 				break;
 		}
-		exit(0);
 	}
 }
 
