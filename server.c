@@ -39,6 +39,7 @@
 
 struct builder {
 	char *hash;
+	size_t number;
 	size_t jobs;
 	size_t refcount;
 };
@@ -72,11 +73,12 @@ void *
 may_grow_array(struct garray *a)
 {
 	if (a->capacity <= a->size) {
+		size_t old = a->capacity;
 		if (a->capacity == 0)
 			a->capacity = ARRAYINITSIZE;
 		else while (a->capacity <= a->size)
 			a->capacity *= 2;
-		a->pointer = reallocarray(a->pointer, 
+		a->pointer = recallocarray(a->pointer, old, 
 		    a->capacity, a->element_size);
 	}
 	if (!a->pointer)
@@ -113,11 +115,18 @@ struct builder *
 new_builder(void)
 {
 	struct builder *b;
+	size_t i;
 	builder_array = may_grow_array(&builders);
 
 	b = emalloc(sizeof(struct builder));
 	b->hash = genhash();
-	builder_array[builders.size++] = b;
+	for (i = 0; i != builders.capacity; i++)
+		if (!builder_array[i])
+			break;
+	b->number = i;
+	builder_array[i] = b;
+	if (i > builders.size)
+		builders.size = i;
 
 	return b;
 }
@@ -311,8 +320,7 @@ handle_event(int fd, int events)
 		state->is_leggit = true;
 		if (debug)
 			printf("Connection registered\n");
-	/* special: first builder is the controller */
-	} else if (state->builder == builder_array[0]) {
+	} else if (state->builder->number == 0) {
 		int fdout = fd == 0 ? 1 : fd;
 		char *line = retrieve_line(fd);
 		if (strcmp(line, "new") == 0) {
@@ -320,7 +328,7 @@ handle_event(int fd, int events)
 			b = new_builder();
 			write(fdout, buffer, 
 			    snprintf(buffer, sizeof buffer, "%zu-%s\n",
-				builders.size-1, b->hash));
+				b->number, b->hash));
 		} else if (strcmp(line, "quit") == 0) {
 			if (fdout == 1)
 				exit(0);
