@@ -229,6 +229,31 @@ create_servers(const char *name)
 	}
 }
 
+void
+handle_event(int fd, int events)
+{
+	struct fdstate *state;
+
+	state = fd2state[fd];
+
+	if (state->is_server) {
+		struct sockaddr_storage addr;
+		socklen_t len = sizeof(addr);
+		struct fdstate *state2;
+
+		int s = accept(fd, (struct sockaddr *)&addr, &len);
+
+		state2 = new_fdstate(fd);
+		state2->builder = NULL;
+		state2->is_server = false;
+		state2->is_leggit = false;
+	} else if (!state->is_leggit) {
+		ssize_t n;
+		char buffer[1024];
+		n = read(fd, buffer, sizeof buffer);
+	}
+
+}
 
 int
 main(int argc, char *argv[])
@@ -260,10 +285,7 @@ main(int argc, char *argv[])
 		for (j = 0; j != fds.size; j++) {
 			if (fd_array[j].revents == 0)
 				continue;
-			printf("Data on fd %d\n", fd_array[j].fd);
-			state = fd2state[fd_array[j].fd];
-			printf("State is %lx %d %d\n", 
-			    state->builder, state->is_server, state->is_leggit);
+			handle_event(fd_array[j].fd, fd_array[j].revents);
 
 			if (--n == 0)
 				break;
