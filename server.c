@@ -37,22 +37,53 @@
 #define BACKLOG 128
 
 
+/* rather straightforward data structures:
+ * each build program is represented by a builder
+ * containing the id hash, and the corresponding
+ * jobs number + count of instances
+ */
 struct builder {
 	char *hash;
 	size_t jobs;
 	size_t refcount;
 };
 
+/* this is all stored in a builder array, and
+ * the index is used for the initial connection
+ * e.g., index-hash is the identification string
+ */
+struct builder **builder_array;
+
+/* Note that builder_array[0] is not a real job
+ * but rather the identifier for any external entity
+ * wanting to control jobs (e.g., through nc -U usually)
+ */
+
+
+
+/* now fds are stored in a pollfd, as is traditional.
+ * where we do move stuff around when fd gets garbage
+ * collected.
+ */
+struct pollfd *fd_array;
+
+/* The whole correspondance fd -> builder is directly
+ * indexed by the fd.
+ * We have a bit of state, as initially the connection
+ * is unrelated to any builder, and then to distinguish
+ * the actual server sockets
+ */
 struct fdstate {
 	struct builder *builder;
 	bool is_server;
 	bool is_leggit;
 };
 
-struct pollfd *fd_array;
-struct builder **builder_array;
 struct fdstate **fd2state;
 
+/* all these three arrays will grow as needed, using
+ * basic size/capacity idioms
+ */
 struct garray {
 	size_t element_size;
 	size_t size;
@@ -66,6 +97,10 @@ struct garray {
 	.element_size = sizeof(struct fdstate *)
     };
 
+/* So basically: both fd2state and builder_array will
+ * have holes (which is okay because null pointers)
+ * but pollfd is always fully populated, as required for poll(2)
+ */
 bool debug;
 
 void *
@@ -77,6 +112,9 @@ may_grow_array(struct garray *a)
 			a->capacity = ARRAYINITSIZE;
 		else while (a->capacity <= a->size)
 			a->capacity *= 2;
+		/* note the use of recallocarray in order to have
+		 * null pointers and the likes
+		 */
 		a->pointer = recallocarray(a->pointer, old, 
 		    a->capacity, a->element_size);
 	}
@@ -110,6 +148,10 @@ genhash(void)
 	return r;
 }
 
+/* XXX returning the index instead of the builder
+ * allows us easy access to the index, instead of
+ * having to store it inside the builder structure
+ */
 size_t
 new_builder(void)
 {
@@ -121,6 +163,10 @@ new_builder(void)
 	b->hash = genhash();
 	b->jobs = 0;
 	b->refcount = 0;
+	/* XXX builders will be gc'd when
+	 * refcount reaches 0 again, except
+	 * for builder 0.
+	 */
 	for (i = 0; i != builders.capacity; i++)
 		if (!builder_array[i])
 			break;
@@ -339,6 +385,7 @@ handle_event(int fd, int events)
 		state->is_leggit = true;
 		if (debug)
 			printf("Connection registered\n");
+		state->builder->refcount++;
 	} else if (state->builder == builder_array[0]) {
 		int fdout = fd == 0 ? 1 : fd;
 		char *line = retrieve_line(fd);
