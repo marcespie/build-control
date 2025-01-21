@@ -336,7 +336,7 @@ main(int argc, char *argv[])
 	state->is_leggit = true;
 	state->builder = b;
 
-	printf("Use 0-%s to connect\n", b->hash);
+	printf("0-%s to connect\n", b->hash);
 
 	while (1) {
 		size_t j;
