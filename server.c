@@ -275,6 +275,7 @@ void
 handle_event(int fd, int events)
 {
 	struct fdstate *state;
+	struct builder *b;
 
 	state = fd2state[fd];
 
@@ -301,7 +302,7 @@ handle_event(int fd, int events)
 		if (!dash) 
 			goto error;
 		*dash = 0;
-		struct builder *b = find_builder(line);
+		b = find_builder(line);
 		if (!b)
 			goto error;
 		if (strcmp(dash+1, b->hash) != 0)
@@ -310,6 +311,31 @@ handle_event(int fd, int events)
 		state->is_leggit = true;
 		if (debug)
 			printf("Connection registered\n");
+	/* special: first builder is the controller */
+	} else if (state->builder == builder_array[0]) {
+		int fdout = fd == 0 ? 1 : fd;
+		char *line = retrieve_line(fd);
+		if (strcmp(line, "new") == 0) {
+			char buffer[1024];
+			b = new_builder();
+			write(fdout, buffer, 
+			    snprintf(buffer, sizeof buffer, "%zu-%s\n",
+				builders.size-1, b->hash));
+		} else if (strcmp(line, "quit") == 0) {
+			if (fdout == 1)
+				exit(0);
+			gc(fd);
+		} else {
+			char *pos = strchr(line, ':');
+			if (!pos)
+				return;
+			*pos = 0;
+			b = find_builder(line);
+			if (b)
+				printf("Found builder\n");
+			else 
+				printf("Builder not found\n");
+		}
 	}
 	return;
 error:
@@ -337,9 +363,9 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (argc < 2)
+	if (argc < 1)
 		errx(1, "usage: build-control socketaddr...");
-	for (i = 1; i != argc; i++)
+	for (i = 0; i != argc; i++)
 		create_servers(argv[i]);
 
 	b = new_builder();
