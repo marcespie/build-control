@@ -39,7 +39,6 @@
 
 struct builder {
 	char *hash;
-	size_t number;
 	size_t jobs;
 	size_t refcount;
 };
@@ -111,7 +110,7 @@ genhash(void)
 	return r;
 }
 
-struct builder *
+size_t
 new_builder(void)
 {
 	struct builder *b;
@@ -120,15 +119,16 @@ new_builder(void)
 
 	b = emalloc(sizeof(struct builder));
 	b->hash = genhash();
+	b->jobs = 0;
+	b->refcount = 0;
 	for (i = 0; i != builders.capacity; i++)
 		if (!builder_array[i])
 			break;
-	b->number = i;
 	builder_array[i] = b;
-	if (i > builders.size)
-		builders.size = i;
+	if (i+1 > builders.size)
+		builders.size = i+1;
 
-	return b;
+	return i;
 }
 
 struct fdstate *
@@ -269,15 +269,15 @@ retrieve_line(int fd)
 	return result;
 }
 
-struct builder *
+ssize_t
 find_builder(char *id)
 {
 	char *end;
 	long l = strtol(id, &end, 10);
 
 	if (l >= builders.size || l < 0)
-		return NULL;
-	return builder_array[l];
+		return -1;
+	return l;
 }
 
 void
@@ -285,6 +285,7 @@ handle_event(int fd, int events)
 {
 	struct fdstate *state;
 	struct builder *b;
+	ssize_t number;
 
 	state = fd2state[fd];
 
@@ -311,7 +312,10 @@ handle_event(int fd, int events)
 		if (!dash) 
 			goto error;
 		*dash = 0;
-		b = find_builder(line);
+		number = find_builder(line);
+		if (number == -1)
+			goto error;
+		b = builder_array[number];
 		if (!b)
 			goto error;
 		if (strcmp(dash+1, b->hash) != 0)
@@ -320,15 +324,16 @@ handle_event(int fd, int events)
 		state->is_leggit = true;
 		if (debug)
 			printf("Connection registered\n");
-	} else if (state->builder->number == 0) {
+	} else if (state->builder == builder_array[0]) {
 		int fdout = fd == 0 ? 1 : fd;
 		char *line = retrieve_line(fd);
 		if (strcmp(line, "new") == 0) {
 			char buffer[1024];
-			b = new_builder();
+			number = new_builder();
+			b = builder_array[number];
 			write(fdout, buffer, 
-			    snprintf(buffer, sizeof buffer, "%zu-%s\n",
-				b->number, b->hash));
+			    snprintf(buffer, sizeof buffer, "%zd-%s\n",
+				number, b->hash));
 		} else if (strcmp(line, "quit") == 0) {
 			if (fdout == 1)
 				exit(0);
@@ -338,9 +343,9 @@ handle_event(int fd, int events)
 			if (!pos)
 				return;
 			*pos = 0;
-			b = find_builder(line);
-			if (b)
-				printf("Found builder\n");
+			number = find_builder(line);
+			if (number != -1)
+				printf("Found builder %zd\n", number);
 			else 
 				printf("Builder not found\n");
 		}
@@ -349,15 +354,16 @@ handle_event(int fd, int events)
 error:
 	close(fd);
 	gc(fd);
+	exit(1);
 }
 
 int
 main(int argc, char *argv[])
 {
 	int i;
-	struct builder *b;
 	struct fdstate *state;
 	int ch;
+	ssize_t number;
 
 	while ((ch = getopt(argc, argv, "d")) != -1) {
 		switch(ch) {
@@ -376,13 +382,13 @@ main(int argc, char *argv[])
 	for (i = 0; i != argc; i++)
 		create_servers(argv[i]);
 
-	b = new_builder();
+	number = new_builder();
 	state = new_fdstate(0);
 	state->is_server = false;
 	state->is_leggit = true;
-	state->builder = b;
+	state->builder = builder_array[number];
 
-	printf("0-%s to connect\n", b->hash);
+	printf("0-%s to connect\n", state->builder->hash);
 
 	while (1) {
 		size_t j;

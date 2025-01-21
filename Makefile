@@ -1,6 +1,6 @@
 all:	server
 
-CFLAGS = -O2 -Wall
+CFLAGS = -O0 -Wall -g
 
 .PHONY: server
 
