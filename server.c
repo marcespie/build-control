@@ -306,8 +306,11 @@ create_servers(const char *name)
 }
 
 void
-gc(int fd)
+gc(size_t j, int fd)
 {
+	close(fd);
+	struct fdstate *state = fd2state[fd];
+	fd2state[fd] = NULL;
 }
 
 char *
@@ -375,7 +378,7 @@ setup_new_connection(int fd, int events)
 }
 
 void
-authentify_connection(int fd, int events, struct fdstate *state)
+authentify_connection(size_t j, int fd, int events, struct fdstate *state)
 {
 	if (debug)
 		printf("Line from client\n");
@@ -401,8 +404,9 @@ authentify_connection(int fd, int events, struct fdstate *state)
 	if (debug)
 		printf("Connection registered\n");
 	b->refcount++;
+	return;
 error:
-	exit(1);
+	gc(j, fd);
 }
 
 void
@@ -434,16 +438,17 @@ handle_control_message(int fd, int events)
 }
 
 void
-handle_event(int fd, int events)
+handle_event(size_t j, int fd, int events)
 {
-	struct fdstate *state;
+	struct fdstate *state = fd2state[fd];
 
-	state = fd2state[fd];
-
-	if (state->is_server) {
+	printf("Event %d %d\n", fd, events);
+	if (events & POLLHUP) {
+		gc(j, fd);
+	} else if (state->is_server) {
 		setup_new_connection(fd, events);
 	} else if (!state->is_leggit) {
-		authentify_connection(fd, events, state);
+		authentify_connection(j, fd, events, state);
 	} else if (state->builder_idx == 0) {
 		handle_control_message(fd, events);
 	}
@@ -489,12 +494,10 @@ main(int argc, char *argv[])
 		for (j = 0; j != fds.size; j++) {
 			if (fd_array[j].revents == 0)
 				continue;
-			handle_event(fd_array[j].fd, fd_array[j].revents);
+			handle_event(j, fd_array[j].fd, fd_array[j].revents);
 
 			if (--n == 0)
 				break;
 		}
 	}
 }
-
-
