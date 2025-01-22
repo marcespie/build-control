@@ -1,0 +1,28 @@
+'build-control' is just a proof-of-concept
+
+Assuming you've recompiled make with the associated patch,
+
+first you start the build-control server with a rendez-vous point, .e.g,
+
+build-control /tmp/mycontrolsocket
+
+Then you ask for a new build, it will give you the token that goes with it:
+e.g.,
+0-f248894cb2237df41841c4c1 to connect  <- that's the control interface
+new
+1-6f53946e9ead7cac9f4e4b2d <- that's the token
+
+you want to
+export BUILDCONTROLADDR=/tmp/mycontrolsocket
+export BUILDTOKEN=1-6f53946e9ead7cac9f4e4b2d
+
+and start your make (very important, HAS to have -j, even -j1)
+
+Then you can control the build from the build-control server, e.g.
+
+1:16
+
+tells it that the FIRST build should have 16 jobs.
+
+dump will show you the fds and the builds the controlserver has.
+
