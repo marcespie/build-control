@@ -200,8 +200,8 @@ new_fdstate(int fd)
 	fd_array[fds.size].fd = fd;
 	fd_array[fds.size++].events = POLLIN|POLLHUP;
 
-	if (fd2s.size < fd)
-		fd2s.size = fd;
+	if (fd2s.size < fd+1)
+		fd2s.size = fd+1;
 	state_array = may_grow_array(&fd2s);
 
 	state = emalloc(sizeof(struct fdstate));
