@@ -75,7 +75,7 @@ struct pollfd *fd_array;
  * the actual server sockets
  */
 struct fdstate {
-	long builder_number;
+	long builder_idx;
 	bool is_server;
 	bool is_leggit;
 };
@@ -225,7 +225,7 @@ register_server(int s)
 
 	state = new_fdstate(s);
 	state->is_server = true;
-	state->builder_number = -1;
+	state->builder_idx = -1;
 }
 
 void 
@@ -330,7 +330,7 @@ retrieve_line(int fd)
 }
 
 ssize_t
-find_builder(char *id)
+find_builder_idx(char *id)
 {
 	char *end;
 	long l = strtol(id, &end, 10);
@@ -352,8 +352,84 @@ dispatch_new_jobs(struct builder *b, char *jobs)
 
 	for (i = 0; i != fds.size; i++) {
 		int s = fd_array[i].fd;
-		if (builder_array[fd2state[s]->builder_number] == b)
+		if (builder_array[fd2state[s]->builder_idx] == b)
 			fdprintf(s, "%ld\r\n", l);
+	}
+}
+
+void
+setup_new_connection(int fd, int events)
+{
+	if (debug)
+		printf("Server connection\n");
+	struct sockaddr_storage addr;
+	socklen_t len = sizeof(addr);
+	struct fdstate *state;
+
+	int s = accept(fd, (struct sockaddr *)&addr, &len);
+
+	state = new_fdstate(s);
+	state->builder_idx = -1;
+	state->is_server = false;
+	state->is_leggit = false;
+}
+
+void
+authentify_connection(int fd, int events, struct fdstate *state)
+{
+	if (debug)
+		printf("Line from client\n");
+	char *line = retrieve_line(fd);
+	if (!line)
+		goto error;
+	char *dash = strchr(line, '-');
+	if (!dash) 
+		goto error;
+	*dash = 0;
+	ssize_t idx = find_builder_idx(line);
+	if (idx == -1)
+		goto error;
+	struct builder *b = builder_array[idx];
+	if (!b)
+		goto error;
+	if (strcmp(dash+1, b->hash) != 0)
+		goto error;
+	state->builder_idx = idx;
+	state->is_leggit = true;
+	if (b->jobs != 0)
+		fdprintf(fd, "%ld\r\n", b->jobs);
+	if (debug)
+		printf("Connection registered\n");
+	b->refcount++;
+error:
+	exit(1);
+}
+
+void
+handle_control_message(int fd, int events)
+{
+	int fdout = fd == 0 ? 1 : fd;
+	char *line = retrieve_line(fd);
+	if (strcmp(line, "new") == 0) {
+		ssize_t idx = new_builder();
+		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
+	} else if (strcmp(line, "quit") == 0) {
+		if (fdout == 1)
+			exit(0);
+		gc(fd);
+	} else {
+		char *pos = strchr(line, ':');
+		if (!pos)
+			return;
+		*pos = 0;
+		ssize_t idx = find_builder_idx(line);
+		if (idx != -1)
+			printf("Found builder %zd\n", idx);
+		else  {
+			printf("Builder not found\n");
+			return;
+		}
+		dispatch_new_jobs(builder_array[idx], pos+1);
 	}
 }
 
@@ -361,90 +437,23 @@ void
 handle_event(int fd, int events)
 {
 	struct fdstate *state;
-	struct builder *b;
-	ssize_t number;
 
 	state = fd2state[fd];
 
 	if (state->is_server) {
-		if (debug)
-			printf("Server connection\n");
-		struct sockaddr_storage addr;
-		socklen_t len = sizeof(addr);
-		struct fdstate *state2;
-
-		int s = accept(fd, (struct sockaddr *)&addr, &len);
-
-		state2 = new_fdstate(s);
-		state2->builder_number = -1;
-		state2->is_server = false;
-		state2->is_leggit = false;
+		setup_new_connection(fd, events);
 	} else if (!state->is_leggit) {
-		if (debug)
-			printf("Line from client\n");
-		char *line = retrieve_line(fd);
-		if (!line)
-			goto error;
-		char *dash = strchr(line, '-');
-		if (!dash) 
-			goto error;
-		*dash = 0;
-		number = find_builder(line);
-		if (number == -1)
-			goto error;
-		b = builder_array[number];
-		if (!b)
-			goto error;
-		if (strcmp(dash+1, b->hash) != 0)
-			goto error;
-		state->builder_number = number;
-		state->is_leggit = true;
-		if (b->jobs != 0)
-			fdprintf(fd, "%ld\r\n", b->jobs);
-		if (debug)
-			printf("Connection registered\n");
-		b->refcount++;
-	} else if (state->builder_number == 0) {
-		int fdout = fd == 0 ? 1 : fd;
-		char *line = retrieve_line(fd);
-		if (strcmp(line, "new") == 0) {
-			number = new_builder();
-			b = builder_array[number];
-			fdprintf(fdout, "%zd-%s\n", number, b->hash);
-		} else if (strcmp(line, "quit") == 0) {
-			if (fdout == 1)
-				exit(0);
-			gc(fd);
-		} else {
-			char *pos = strchr(line, ':');
-			if (!pos)
-				return;
-			*pos = 0;
-			number = find_builder(line);
-			if (number != -1)
-				printf("Found builder %zd\n", number);
-			else  {
-				printf("Builder not found\n");
-				return;
-			}
-			b = builder_array[number];
-			dispatch_new_jobs(b, pos+1);
-		}
+		authentify_connection(fd, events, state);
+	} else if (state->builder_idx == 0) {
+		handle_control_message(fd, events);
 	}
-	return;
-error:
-	close(fd);
-	gc(fd);
-	exit(1);
 }
 
 int
 main(int argc, char *argv[])
 {
 	int i;
-	struct fdstate *state;
 	int ch;
-	ssize_t number;
 
 	while ((ch = getopt(argc, argv, "d")) != -1) {
 		switch(ch) {
@@ -463,13 +472,13 @@ main(int argc, char *argv[])
 	for (i = 0; i != argc; i++)
 		create_servers(argv[i]);
 
-	number = new_builder();
-	state = new_fdstate(0);
+	ssize_t idx = new_builder();
+	struct fdstate *state = new_fdstate(0);
 	state->is_server = false;
 	state->is_leggit = true;
-	state->builder_number = number;
+	state->builder_idx = idx;
 
-	printf("0-%s to connect\n", builder_array[number]->hash);
+	printf("0-%s to connect\n", builder_array[idx]->hash);
 
 	while (1) {
 		size_t j;
