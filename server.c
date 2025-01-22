@@ -80,7 +80,7 @@ struct fdstate {
 	bool is_leggit;
 };
 
-struct fdstate **fd2state;
+struct fdstate **state_array;
 
 /* all these three arrays will grow as needed, using
  * basic size/capacity idioms
@@ -98,7 +98,7 @@ struct garray {
 	.element_size = sizeof(struct fdstate *)
     };
 
-/* So basically: both fd2state and builder_array will
+/* So basically: both state_array and builder_array will
  * have holes (which is okay because null pointers)
  * but pollfd is always fully populated, as required for poll(2)
  */
@@ -202,11 +202,11 @@ new_fdstate(int fd)
 
 	if (fd2s.size < fd)
 		fd2s.size = fd;
-	fd2state = may_grow_array(&fd2s);
+	state_array = may_grow_array(&fd2s);
 
 	state = emalloc(sizeof(struct fdstate));
 
-	fd2state[fd] = state;
+	state_array[fd] = state;
 
 	return state;
 }
@@ -309,8 +309,24 @@ void
 gc(size_t j, int fd)
 {
 	close(fd);
-	struct fdstate *state = fd2state[fd];
-	fd2state[fd] = NULL;
+	/* just reorder the fd_array. Note that we will "miss" one
+	 * potential event this loop but that's not a problem
+	 */
+	if (j != fds.size -1)
+		fd_array[j].fd = fd_array[fds.size-1].fd;
+	fds.size--;
+	struct fdstate *state = state_array[fd];
+	state_array[fd] = NULL;
+
+	if (state->builder_idx > 0) {
+		struct builder *b = builder_array[state->builder_idx];
+		b->refcount--;
+		if (b->refcount == 0) {
+			free(b);
+			builder_array[state->builder_idx] = NULL;
+		}
+	}
+	free(state);
 }
 
 char *
@@ -355,7 +371,7 @@ dispatch_new_jobs(struct builder *b, char *jobs)
 
 	for (i = 0; i != fds.size; i++) {
 		int s = fd_array[i].fd;
-		if (builder_array[fd2state[s]->builder_idx] == b)
+		if (builder_array[state_array[s]->builder_idx] == b)
 			fdprintf(s, "%ld\r\n", l);
 	}
 }
@@ -410,7 +426,30 @@ error:
 }
 
 void
-handle_control_message(int fd, int events)
+dump(int fdout)
+{
+	size_t idx;
+
+	for (idx = 0; idx != fd2s.size; idx++) {
+		struct fdstate *s = state_array[idx];
+		if (!s)
+			continue;
+		fdprintf(fdout, 
+		    "fd %zu points to job #%ld (server %d/leggit %d)\n", 
+		    idx, s->builder_idx, s->is_server, s->is_leggit);
+	}
+	for (idx = 0; idx != builders.size; idx++) {
+		struct builder *b = builder_array[idx];
+		if (!b)
+			continue;
+		fdprintf(fdout, 
+		    "Build number %zu, hash %s, jobcount %ld refs %zu\n",
+		    idx, b->hash, b->jobs, b->refcount);
+	}
+}
+
+void
+handle_control_message(size_t j, int fd, int events)
 {
 	int fdout = fd == 0 ? 1 : fd;
 	char *line = retrieve_line(fd);
@@ -420,17 +459,17 @@ handle_control_message(int fd, int events)
 	} else if (strcmp(line, "quit") == 0) {
 		if (fdout == 1)
 			exit(0);
-		gc(fd);
+		gc(j, fd);
+    	} else if (strcmp(line, "dump") == 0) {
+		dump(fdout);
 	} else {
 		char *pos = strchr(line, ':');
 		if (!pos)
 			return;
 		*pos = 0;
 		ssize_t idx = find_builder_idx(line);
-		if (idx != -1)
-			printf("Found builder %zd\n", idx);
-		else  {
-			printf("Builder not found\n");
+		if (idx == -1) {
+			fdprintf(fdout, "Couldn't find builder %zd\n", idx);
 			return;
 		}
 		dispatch_new_jobs(builder_array[idx], pos+1);
@@ -440,9 +479,8 @@ handle_control_message(int fd, int events)
 void
 handle_event(size_t j, int fd, int events)
 {
-	struct fdstate *state = fd2state[fd];
+	struct fdstate *state = state_array[fd];
 
-	printf("Event %d %d\n", fd, events);
 	if (events & POLLHUP) {
 		gc(j, fd);
 	} else if (state->is_server) {
@@ -450,7 +488,7 @@ handle_event(size_t j, int fd, int events)
 	} else if (!state->is_leggit) {
 		authentify_connection(j, fd, events, state);
 	} else if (state->builder_idx == 0) {
-		handle_control_message(fd, events);
+		handle_control_message(j, fd, events);
 	}
 }
 
