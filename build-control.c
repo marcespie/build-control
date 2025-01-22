@@ -242,6 +242,8 @@ create_local_server(const char *name)
 		err(1, "can't remove %s", name);
 
 	s = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (s == -1)
+		errx(1, "couldn't create socket");
 
 	if (bind(s, (const struct sockaddr *)&addr, sizeof(addr)) == -1)
 		errx(1, "couldn't bind %s", name);
