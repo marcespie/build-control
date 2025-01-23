@@ -18,7 +18,7 @@ Index: job.c
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.c,v
 diff -u -p -r1.166 job.c
 --- job.c	18 Jun 2024 02:11:03 -0000	1.166
-+++ job.c	22 Jan 2025 22:20:12 -0000
++++ job.c	23 Jan 2025 08:26:04 -0000
 @@ -93,6 +93,10 @@
  #include <stdlib.h>
  #include <string.h>
@@ -51,15 +51,21 @@ diff -u -p -r1.166 job.c
  static volatile sig_atomic_t got_fatal;
  
  static volatile sig_atomic_t got_SIGINT, got_SIGHUP, got_SIGQUIT, got_SIGTERM, 
-@@ -150,6 +159,7 @@ static void debug_vprintf(const char *, 
- static void may_remove_target(Job *);
+@@ -151,6 +160,13 @@ static void may_remove_target(Job *);
  static void print_error(Job *);
  static void internal_print_errors(void);
-+static void may_adjust_maxjobs(void);
  
++/* functions that adjust the number of jobs */
++static void adjust_up(void);
++static void may_adjust_jobs_goal(void);
++static int connect_to_local_addr(const char *);
++static int connect_to_inet(const char *, const char *);
++static int connect_to(char *);
++
  static int dying_signal = 0;
  
-@@ -273,6 +283,7 @@ print_error(Job *j)
+ const char *	basedirectory = NULL;
+@@ -273,6 +289,7 @@ print_error(Job *j)
  	Buf_Destroy(&buf);
  	free(j->cmd);
  }
@@ -67,7 +73,7 @@ diff -u -p -r1.166 job.c
  static void
  quick_summary(int signo)
  {
-@@ -540,8 +551,13 @@ postprocess_job(Job *job)
+@@ -540,8 +557,13 @@ postprocess_job(Job *job)
  		job->next = errorJobs;
  		errorJobs = job;
  	} else {
@@ -83,7 +89,7 @@ diff -u -p -r1.166 job.c
  	}
  
  	if (errorJobs != NULL && aborting != ABORT_INTERRUPT)
-@@ -658,7 +674,7 @@ may_continue_job(Job *job)
+@@ -658,7 +680,7 @@ may_continue_job(Job *job)
  		bool finished = job_run_next(job);
  		if (finished)
  			postprocess_job(job);
@@ -92,20 +98,66 @@ diff -u -p -r1.166 job.c
  			determine_expensive_job(job);
  	}
  }
-@@ -753,6 +769,9 @@ reap_jobs(void)
+@@ -753,6 +775,8 @@ reap_jobs(void)
  	bool reaped = false;
  	Job *job;
  
-+	if (control_point != -1) {
-+		may_adjust_maxjobs();
-+	}
++	if (control_point != -1)
++		may_adjust_jobs_goal();
  	while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) > 0) {
  		if (WIFSTOPPED(status))
  			continue;
-@@ -810,6 +829,38 @@ handle_running_jobs(void)
- 	reset_signal_mask();
+@@ -817,26 +841,22 @@ loop_handle_running_jobs(void)
+ 		handle_running_jobs();
  }
  
++
++
+ void
+ Job_Init(int maxJobs)
+ {
+-	Job *j;
+-	int i;
+-
+ 	runningJobs = NULL;
+ 	heldJobs = NULL;
+ 	errorJobs = NULL;
+ 	availableJobs = NULL;
+-	sequential = maxJobs == 1;
++	jobs_goal = maxJobs;
+ 
++	adjust_up();
+ 	/* we allocate n+1 jobs, since we may need an extra job for
+ 	 * running .INTERRUPT.  */
+-	j = ereallocarray(NULL, sizeof(Job), maxJobs+1);
+-	for (i = 0; i != maxJobs; i++) {
+-		j[i].next = availableJobs;
+-		availableJobs = &j[i];
+-	}
+-	extra_job = &j[maxJobs];
++	/* we need the extra_job for running .INTERRUPT */
++	extra_job = emalloc(sizeof(Job));
+ 	mypid = getpid();
+ 
+ 	aborting = 0;
+@@ -846,6 +866,8 @@ Job_Init(int maxJobs)
+ bool
+ can_start_job(void)
+ {
++	if (control_point != -1)
++		may_adjust_jobs_goal();
+ 	if (aborting || availableJobs == NULL)
+ 		return false;
+ 	else
+@@ -956,4 +978,164 @@ Job_AbortAll(void)
+ 	 */
+ 	while (waitpid(WAIT_ANY, &foo, WNOHANG) > 0)
+ 		continue;
++}
++
++/* Job control protocol: if the right environment variables are defined,
++ * the actual number of parallel jobs may be adjusted from outside.
++ */
 +static void
 +adjust_up(void)
 +{
@@ -120,32 +172,63 @@ diff -u -p -r1.166 job.c
 +
 +
 +static void
-+may_adjust_maxjobs(void)
++may_adjust_jobs_goal(void)
 +{
-+	int n = poll(pollarray, 1, 0);
-+	if (n != 1)
-+		return;
-+	if (pollarray[0].revents & POLLHUP) {
++	char buffer[1024];
++	int filled = 0;
++	ssize_t n;
++	long value;
++	char *end;
++
++	/* since the messages are rather short, we assume a full message
++	 * will always make through.
++	 */
++	while ((n = poll(pollarray, 1, 0)) == 1) {
++		if (pollarray[0].revents & POLLHUP) {
++			/* either the server went belly up or we didn't
++			 * identify properly */
++			goto error;
++		} else {
++			/* this is a bit tricky: we may have slept a long
++			 * time, so there may be several events waiting for 
++			 * us -> keep polling/parsing job number lines.
++			 */
++			n = read(control_point, buffer+filled, 
++			    sizeof buffer-1-filled);
++			if (n == -1)
++				goto error;
++			filled += n;
++			buffer[filled] = 0;
++			while (filled > 0) {
++				value = strtol(buffer, &end, 10);
++				if (value < 0)
++					goto error;
++				if (*end == 0)
++					break; /* we haven't got a full line */
++				/* skips thru terminators */
++				while (*end == '\r' || *end == '\n')
++					end++;
++				/* adjust goals temporarily */
++				jobs_goal = value;
++				/* and go for another round */
++				memmove(buffer, end, 
++				    sizeof buffer - (end-buffer));
++				filled -= (end-buffer);
++			}
++		}
++		continue;
++error:
 +		close(control_point);
 +		control_point = -1;
-+		return;
-+	} else {
-+		char buffer[1024];
-+		read(control_point, buffer, sizeof buffer-1);
-+		jobs_goal = atoi(buffer);
++		break;
 +	}
 +	if (allocated < jobs_goal)
 +		adjust_up();
 +}
 +
- void
- loop_handle_running_jobs(void)
- {
-@@ -817,26 +868,102 @@ loop_handle_running_jobs(void)
- 		handle_running_jobs();
- }
- 
-+
++/* various types of socket: if anything goes wrong, we just don't connect
++ * and we won't be able to adjust anything
++ */
 +static int
 +connect_to_local_addr(const char *name)
 +{
@@ -180,7 +263,7 @@ diff -u -p -r1.166 job.c
 +
 +	error = getaddrinfo(server, service, &hints, &res0);
 +	if (error)
-+		Fatal("getaddrinfo: %s", gai_strerror(error));
++		return -1;
 +
 +	for (res = res0; res; res = res->ai_next) {
 +		s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
@@ -211,49 +294,26 @@ diff -u -p -r1.166 job.c
 +	}
 +}
 +
- void
--Job_Init(int maxJobs)
++void
 +may_connect_to_controller(void)
- {
--	Job *j;
--	int i;
++{
 +	char *addr = getenv("BUILDCONTROLADDR");
 +	char *token = getenv("BUILDTOKEN");
 +	if (addr != NULL && strcmp(addr, "") != 0
 +	    && token != NULL && strcmp(token, "") != 0) {
 +		control_point = connect_to(addr);
 +		if (control_point != -1) {
++			/* if we managed to connect, identify ourselves
++			 * to the builder.
++			 */
 +			write(control_point, token, strlen(token));
++			/* Follow the full protocol, make it a full line */
++			write(control_point, "\r\n", 2);
 +			pollarray[0].fd = control_point;
 +			pollarray[0].events = POLLIN | POLLHUP;
 +		}
 +	}
-+}
- 
-+void
-+Job_Init(int maxJobs)
-+{
- 	runningJobs = NULL;
- 	heldJobs = NULL;
- 	errorJobs = NULL;
- 	availableJobs = NULL;
--	sequential = maxJobs == 1;
-+	jobs_goal = maxJobs;
- 
-+	adjust_up();
- 	/* we allocate n+1 jobs, since we may need an extra job for
- 	 * running .INTERRUPT.  */
--	j = ereallocarray(NULL, sizeof(Job), maxJobs+1);
--	for (i = 0; i != maxJobs; i++) {
--		j[i].next = availableJobs;
--		availableJobs = &j[i];
--	}
--	extra_job = &j[maxJobs];
-+	/* we need the extra_job for running .INTERRUPT */
-+	extra_job = emalloc(sizeof(Job));
- 	mypid = getpid();
- 
- 	aborting = 0;
+ }
 Index: job.h
 ===================================================================
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.h,v
