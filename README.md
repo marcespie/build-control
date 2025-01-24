@@ -17,6 +17,10 @@ back the hash to identify itself
 - whenever the controller wants to change the number of jobs,
 it passes back the desired number of jobs.
 
+- text-based protocol, so follows the age-old telnet classics where it
+matters, namely passes \r\n for end of line, and will be happy with
+any line termination on the receiving side (be it \n, \r\n, or even \r)
+
 ## Why this complexity:
 
 - we want to be able to control every build on a cluster for a program
