@@ -52,6 +52,9 @@ be ill-advised. They're also way more vulnerable to any kind of attack.
 - the hash follows the pattern number-hash, where number is the project
 number, just so you don't actually have to look-up a hash, the hash is
 verified on connection as a basic security measure.
+Note that it's just an optimisation based on the simple server.
+The server can pass any random string that helps it (for instance, in perl
+it will be a hash key, most probably)
 
 ## Ending:
 
