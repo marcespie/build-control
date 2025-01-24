@@ -294,9 +294,7 @@ create_servers(const char *name)
 		char *pos = strchr(name, ':');
 		if (pos != NULL) {
 			size_t len = pos-name;
-			char *server = malloc(len+1);
-			if (!server)
-				err(1, "out of memory");
+			char *server = emalloc(len+1);
 			memcpy(server, name, len);
 			server[len] = 0;
 			create_inet_server(server, pos+1);
