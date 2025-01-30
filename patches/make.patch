@@ -3,7 +3,7 @@ Index: engine.c
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/engine.c,v
 diff -u -p -r1.74 engine.c
 --- engine.c	9 Apr 2024 15:08:21 -0000	1.74
-+++ engine.c	22 Jan 2025 18:04:22 -0000
++++ engine.c	30 Jan 2025 14:34:38 -0000
 @@ -579,8 +579,6 @@ handle_job_status(Job *job, int status)
  			 * JOB_IS_EXPENSIVE, perform the computation for
  			 * sequential make to figure out whether to display the
@@ -18,7 +18,7 @@ Index: job.c
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.c,v
 diff -u -p -r1.166 job.c
 --- job.c	18 Jun 2024 02:11:03 -0000	1.166
-+++ job.c	23 Jan 2025 08:26:04 -0000
++++ job.c	30 Jan 2025 14:49:04 -0000
 @@ -93,6 +93,10 @@
  #include <stdlib.h>
  #include <string.h>
@@ -57,7 +57,7 @@ diff -u -p -r1.166 job.c
  
 +/* functions that adjust the number of jobs */
 +static void adjust_up(void);
-+static void may_adjust_jobs_goal(void);
++static void may_adjust_jobs_goal(int);
 +static int connect_to_local_addr(const char *);
 +static int connect_to_inet(const char *, const char *);
 +static int connect_to(char *);
@@ -73,7 +73,7 @@ diff -u -p -r1.166 job.c
  static void
  quick_summary(int signo)
  {
-@@ -540,8 +557,13 @@ postprocess_job(Job *job)
+@@ -540,8 +557,15 @@ postprocess_job(Job *job)
  		job->next = errorJobs;
  		errorJobs = job;
  	} else {
@@ -85,11 +85,13 @@ diff -u -p -r1.166 job.c
 +	    	} else {
 +			free(job);
 +			allocated--;
++			if (allocated == 0)
++				may_adjust_jobs_goal(INFTIM);
 +		}
  	}
  
  	if (errorJobs != NULL && aborting != ABORT_INTERRUPT)
-@@ -658,7 +680,7 @@ may_continue_job(Job *job)
+@@ -658,7 +682,7 @@ may_continue_job(Job *job)
  		bool finished = job_run_next(job);
  		if (finished)
  			postprocess_job(job);
@@ -98,16 +100,16 @@ diff -u -p -r1.166 job.c
  			determine_expensive_job(job);
  	}
  }
-@@ -753,6 +775,8 @@ reap_jobs(void)
+@@ -753,6 +777,8 @@ reap_jobs(void)
  	bool reaped = false;
  	Job *job;
  
 +	if (control_point != -1)
-+		may_adjust_jobs_goal();
++		may_adjust_jobs_goal(0);
  	while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) > 0) {
  		if (WIFSTOPPED(status))
  			continue;
-@@ -817,26 +841,22 @@ loop_handle_running_jobs(void)
+@@ -817,26 +843,22 @@ loop_handle_running_jobs(void)
  		handle_running_jobs();
  }
  
@@ -140,16 +142,16 @@ diff -u -p -r1.166 job.c
  	mypid = getpid();
  
  	aborting = 0;
-@@ -846,6 +866,8 @@ Job_Init(int maxJobs)
+@@ -846,6 +868,8 @@ Job_Init(int maxJobs)
  bool
  can_start_job(void)
  {
 +	if (control_point != -1)
-+		may_adjust_jobs_goal();
++		may_adjust_jobs_goal(0);
  	if (aborting || availableJobs == NULL)
  		return false;
  	else
-@@ -956,4 +978,164 @@ Job_AbortAll(void)
+@@ -956,4 +980,166 @@ Job_AbortAll(void)
  	 */
  	while (waitpid(WAIT_ANY, &foo, WNOHANG) > 0)
  		continue;
@@ -172,7 +174,7 @@ diff -u -p -r1.166 job.c
 +
 +
 +static void
-+may_adjust_jobs_goal(void)
++may_adjust_jobs_goal(int timeout)
 +{
 +	char buffer[1024];
 +	int filled = 0;
@@ -183,7 +185,7 @@ diff -u -p -r1.166 job.c
 +	/* since the messages are rather short, we assume a full message
 +	 * will always make through.
 +	 */
-+	while ((n = poll(pollarray, 1, 0)) == 1) {
++	while ((n = poll(pollarray, 1, timeout)) == 1) {
 +		if (pollarray[0].revents & POLLHUP) {
 +			/* either the server went belly up or we didn't
 +			 * identify properly */
@@ -216,6 +218,8 @@ diff -u -p -r1.166 job.c
 +				filled -= (end-buffer);
 +			}
 +		}
++		if (timeout == INFTIM && jobs_goal != 0)
++			timeout = 0;
 +		continue;
 +error:
 +		close(control_point);
@@ -319,7 +323,7 @@ Index: job.h
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.h,v
 diff -u -p -r1.39 job.h
 --- job.h	21 May 2024 05:00:48 -0000	1.39
-+++ job.h	22 Jan 2025 22:05:53 -0000
++++ job.h	30 Jan 2025 14:34:38 -0000
 @@ -96,7 +96,6 @@ extern void debug_job_printf(const char 
  extern int check_dying_signal(void);
  
@@ -334,7 +338,7 @@ Index: main.c
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/main.c,v
 diff -u -p -r1.133 main.c
 --- main.c	18 Jun 2024 02:11:03 -0000	1.133
-+++ main.c	22 Jan 2025 22:06:43 -0000
++++ main.c	30 Jan 2025 14:34:38 -0000
 @@ -706,6 +706,7 @@ main(int argc, char **argv)
  	Var_Set("MACHINE", machine);
  	Var_Set("MACHINE_ARCH", machine_arch);
