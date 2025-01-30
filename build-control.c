@@ -244,7 +244,7 @@ new_builder(void)
 
 	b = emalloc(sizeof(struct builder));
 	b->hash = genhash();
-	b->jobs = 0;
+	b->jobs = -1;
 	b->refcount = 0;
 	/* XXX builders will be gc'd when
 	 * refcount reaches 0 again, except
@@ -489,7 +489,7 @@ authentify_connection(size_t j, int fd, int events, struct fdstate *state)
 		goto error;
 	state->builder_idx = idx;
 	state->is_leggit = true;
-	if (b->jobs != 0)
+	if (b->jobs != -1)
 		fdprintf(fd, "%ld\r\n", b->jobs);
 	if (debug)
 		printf("Connection registered\n");
