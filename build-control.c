@@ -434,6 +434,10 @@ dispatch_new_jobs(struct builder *b, char *jobs)
 {
 	size_t i;
 	char *end;
+
+	if (!b)
+		return;
+
 	long l = strtol(jobs, &end, 10);
 	if (l < 0)
 		return;
