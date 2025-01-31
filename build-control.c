@@ -32,7 +32,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#ifdef __linux__
+#if !defined(__OpenBSD__)
+
+/* straight from OpenBSD libc */
 /*
  * This is sqrt(SIZE_MAX+1), as s1*s2 <= SIZE_MAX
  * if both s1 < MUL_NO_OVERFLOW and s2 < MUL_NO_OVERFLOW
@@ -97,6 +99,7 @@ recallocarray(void *ptr, size_t oldnmemb, size_t newnmemb, size_t size)
 #define ARRAYINITSIZE 64
 #define HASHINITSIZE 64
 #define BACKLOG 128
+#define SOCKETBUFSIZE 1024
 
 
 /* rather straightforward data structures:
@@ -120,7 +123,6 @@ struct builder **builder_array;
  * but rather the identifier for any external entity
  * wanting to control jobs (e.g., through nc -U usually)
  */
-
 
 
 /* now fds are stored in a pollfd, as is traditional.
@@ -188,7 +190,9 @@ may_grow_array(struct garray *a)
 void *
 emalloc(size_t sz)
 {
-	void *p = malloc(sz);
+	void *p;
+
+	p = malloc(sz);
 	if (!p)
 		errx(1, "out of memory");
 	return p;
@@ -199,9 +203,11 @@ genhash(void)
 {
 	unsigned char binary[HASHLENGTH/2];
 	size_t i;
-	char *r = emalloc(HASHLENGTH+1);
+	char *r;
 
-#ifdef __linux__
+	r = emalloc(HASHLENGTH+1);
+
+#if defined(__linux__)
 	int fd = open("/dev/random", O_RDONLY);
 	if (fd == -1)
 		err(1, "can't open dev/random");
@@ -221,13 +227,18 @@ genhash(void)
 void
 fdprintf(int fd, const char *fmt, ...)
 {
-	char buffer[1024];
+	char buffer[SOCKETBUFSIZE];
 	va_list ap;
 	int n;
 
 	va_start(ap, fmt);
 	n = vsnprintf(buffer, sizeof buffer, fmt, ap);
-	write(fd, buffer, n);
+	if (n < 0)
+		err(1, "vnsprinf");
+	if (n > sizeof buffer)
+		errx(1, "bad use of fdprintf with a too large result");
+	if (write(fd, buffer, n) != n)
+		errx(1, "write failed");
 	va_end(ap);
 }
 
@@ -245,11 +256,10 @@ new_builder(void)
 	b = emalloc(sizeof(struct builder));
 	b->hash = genhash();
 	b->jobs = -1;
-	b->refcount = 0;
-	/* XXX builders will be gc'd when
-	 * refcount reaches 0 again, except
+	/* XXX builders will be gc'd when refcount reaches 0 again, except
 	 * for builder 0.
 	 */
+	b->refcount = 0;
 	for (i = 0; i != builders.capacity; i++)
 		if (!builder_array[i])
 			break;
@@ -361,10 +371,14 @@ create_servers(const char *name)
 	if (strchr(name, '/')) {
 		create_local_server(name);
 	} else {
-		char *pos = strchr(name, ':');
+		char *pos;
+		pos = strchr(name, ':');
 		if (pos != NULL) {
-			size_t len = pos-name;
-			char *server = emalloc(len+1);
+			size_t len;
+			char *server;
+
+			len = pos-name;
+			server = emalloc(len+1);
 			memcpy(server, name, len);
 			server[len] = 0;
 			create_inet_server(server, pos+1);
@@ -378,6 +392,8 @@ create_servers(const char *name)
 void
 gc(size_t j, int fd)
 {
+	struct fdstate *state;
+
 	close(fd);
 	/* just reorder the fd_array. Note that we will "miss" one
 	 * potential event this loop but that's not a problem
@@ -385,11 +401,12 @@ gc(size_t j, int fd)
 	if (j != fds.size -1)
 		fd_array[j].fd = fd_array[fds.size-1].fd;
 	fds.size--;
-	struct fdstate *state = state_array[fd];
+	state = state_array[fd];
 	state_array[fd] = NULL;
 
 	if (state->builder_idx > 0) {
-		struct builder *b = builder_array[state->builder_idx];
+		struct builder *b;
+		b = builder_array[state->builder_idx];
 		b->refcount--;
 		if (b->refcount == 0) {
 			free(b);
@@ -399,11 +416,15 @@ gc(size_t j, int fd)
 	free(state);
 }
 
+/* retrieves line (from telnet-like protocol) and strips end-of-line, e.g., 
+ * all \r\n\t spaces, along with starting spaces
+ * XXX notice static storage, so overwritten each time retrieve_line is called.
+ */
 char *
 retrieve_line(int fd)
 {
 	ssize_t n;
-	static char buffer[1024];
+	static char buffer[SOCKETBUFSIZE];
 	char *result;
 
 	n = read(fd, buffer, sizeof buffer - 1);
@@ -422,8 +443,9 @@ ssize_t
 find_builder_idx(char *id)
 {
 	char *end;
-	long l = strtol(id, &end, 10);
+	long l;
 
+	l = strtol(id, &end, 10);
 	if (l >= builders.size || l < 0)
 		return -1;
 	return l;
@@ -434,11 +456,9 @@ dispatch_new_jobs(struct builder *b, char *jobs)
 {
 	size_t i;
 	char *end;
+	long l;
 
-	if (!b)
-		return;
-
-	long l = strtol(jobs, &end, 10);
+	l = strtol(jobs, &end, 10);
 	if (l < 0)
 		return;
 	b->jobs = l;
@@ -453,13 +473,16 @@ dispatch_new_jobs(struct builder *b, char *jobs)
 void
 setup_new_connection(int fd, int events)
 {
+	struct sockaddr_storage addr;
+	socklen_t len;
+	struct fdstate *state;
+	int s;
+
 	if (debug)
 		printf("Server connection\n");
-	struct sockaddr_storage addr;
-	socklen_t len = sizeof(addr);
-	struct fdstate *state;
+	len = sizeof(addr);
 
-	int s = accept(fd, (struct sockaddr *)&addr, &len);
+	s = accept(fd, (struct sockaddr *)&addr, &len);
 
 	state = new_fdstate(s);
 	state->builder_idx = -1;
@@ -470,19 +493,24 @@ setup_new_connection(int fd, int events)
 void
 authentify_connection(size_t j, int fd, int events, struct fdstate *state)
 {
+	char *line;
+	char *dash;
+	ssize_t idx;
+	struct builder *b;
+
 	if (debug)
 		printf("Line from client\n");
-	char *line = retrieve_line(fd);
+	line = retrieve_line(fd);
 	if (!line)
 		goto error;
-	char *dash = strchr(line, '-');
+	dash = strchr(line, '-');
 	if (!dash) 
 		goto error;
 	*dash = 0;
-	ssize_t idx = find_builder_idx(line);
+	idx = find_builder_idx(line);
 	if (idx == -1)
 		goto error;
-	struct builder *b = builder_array[idx];
+	b = builder_array[idx];
 	if (!b)
 		goto error;
 	if (strcmp(dash+1, b->hash) != 0)
@@ -503,9 +531,11 @@ void
 dump(int fdout)
 {
 	size_t idx;
+	struct fdstate *s;
+	struct builder *b;
 
 	for (idx = 0; idx != fd2s.size; idx++) {
-		struct fdstate *s = state_array[idx];
+		s = state_array[idx];
 		if (!s)
 			continue;
 		fdprintf(fdout, 
@@ -513,7 +543,7 @@ dump(int fdout)
 		    idx, s->builder_idx, s->is_server, s->is_leggit);
 	}
 	for (idx = 0; idx != builders.size; idx++) {
-		struct builder *b = builder_array[idx];
+		b = builder_array[idx];
 		if (!b)
 			continue;
 		fdprintf(fdout, 
@@ -525,10 +555,16 @@ dump(int fdout)
 void
 handle_control_message(size_t j, int fd, int events)
 {
-	int fdout = fd == 0 ? 1 : fd;
-	char *line = retrieve_line(fd);
+	int fdout;
+	char *line;
+	ssize_t idx;
+	char *pos;
+	struct builder *b;
+
+	fdout = fd == 0 ? 1 : fd;
+	line = retrieve_line(fd);
 	if (strcmp(line, "new") == 0) {
-		ssize_t idx = new_builder();
+		idx = new_builder();
 		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
 	} else if (strcmp(line, "quit") == 0) {
 		if (fdout == 1)
@@ -537,23 +573,29 @@ handle_control_message(size_t j, int fd, int events)
     	} else if (strcmp(line, "dump") == 0) {
 		dump(fdout);
 	} else {
-		char *pos = strchr(line, ':');
+		pos = strchr(line, ':');
 		if (!pos)
 			return;
 		*pos = 0;
-		ssize_t idx = find_builder_idx(line);
+		idx = find_builder_idx(line);
 		if (idx == -1) {
 			fdprintf(fdout, "Couldn't find builder %zd\n", idx);
 			return;
 		}
-		dispatch_new_jobs(builder_array[idx], pos+1);
+		b = builder_array[idx];
+		if (!b)
+			fdprintf(fdout, "%zd: no such builder\n", idx);
+		else
+			dispatch_new_jobs(b, pos+1);
 	}
 }
 
 void
 handle_event(size_t j, int fd, int events)
 {
-	struct fdstate *state = state_array[fd];
+	struct fdstate *state;
+
+	state = state_array[fd];
 
 	if (events & POLLHUP) {
 		gc(j, fd);
@@ -571,6 +613,10 @@ main(int argc, char *argv[])
 {
 	int i;
 	int ch;
+	ssize_t idx;
+	struct fdstate *state;
+	int n;
+	size_t j;
 
 	while ((ch = getopt(argc, argv, "d")) != -1) {
 		switch(ch) {
@@ -589,20 +635,19 @@ main(int argc, char *argv[])
 	for (i = 0; i != argc; i++)
 		create_servers(argv[i]);
 
-	ssize_t idx = new_builder();
-	struct fdstate *state = new_fdstate(0);
+	idx = new_builder();
+	state = new_fdstate(0);
 	state->is_server = false;
 	state->is_leggit = true;
 	state->builder_idx = idx;
 
 	printf("0-%s to connect\n", builder_array[idx]->hash);
 
-	while (1) {
-		size_t j;
-#ifndef INFTIM
+	while (1) { /* classic poll loop */
+#ifndef INFTIM	
 #define INFTIM (-1)
 #endif
-		int n = poll(fd_array, fds.size, INFTIM);
+		n = poll(fd_array, fds.size, INFTIM);
 
 		if (n == -1)
 			err(1, "poll");
