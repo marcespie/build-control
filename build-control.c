@@ -31,6 +31,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pwd.h>
 
 #if !defined(__OpenBSD__)
 
@@ -55,6 +56,8 @@
  * if both s1 < MUL_NO_OVERFLOW and s2 < MUL_NO_OVERFLOW
  */
 #define MUL_NO_OVERFLOW ((size_t)1 << (sizeof(size_t) * 4))
+
+void *recallocarray(void *, size_t, size_t, size_t);
 
 void *
 recallocarray(void *ptr, size_t oldnmemb, size_t newnmemb, size_t size)
@@ -109,11 +112,17 @@ recallocarray(void *ptr, size_t oldnmemb, size_t newnmemb, size_t size)
 }
 #endif
 
+bool debug;
+char *setuser;
+
 #define HASHLENGTH 24
 
 #define ARRAYINITSIZE 64
 #define BACKLOG 128
 #define SOCKETBUFSIZE 1024
+
+/* For linux */
+#define RANDOM_DEVICE "/dev/random"
 
 
 /* rather straightforward data structures:
@@ -160,7 +169,7 @@ struct fdstate {
 struct fdstate **state_array;
 
 /* all these three arrays will grow as needed, using
- * basic size/capacity idioms
+ * basic size/capacity idioms. Note we rely on 0 initialization.
  */
 struct garray {
 	size_t element_size;
@@ -175,12 +184,41 @@ struct garray {
 	.element_size = sizeof(struct fdstate *)
     };
 
+
+void *may_grow_array(struct garray *);
+void *emalloc(size_t);
+char *genhash(void);
+void fdprintf(int, const char *, ...);
+size_t new_builder(void);
+struct fdstate *new_fdstate(int);
+void usage();
+void register_server(int);
+void create_local_server(const char *);
+void create_inet_server(const char *, const char *);
+void create_servers(const char *);
+void gc(size_t, int);
+char *retrieve_line(int);
+ssize_t find_builder_idx(const char *);
+void dispatch_new_jobs(struct builder *, const char *);
+void setup_new_connection(int, int);
+void authentify_connection(size_t, int, int, struct fdstate *);
+void dump(int);
+void handle_control_message(size_t, int, int);
+void handle_event(size_t, int, int);
+void dropprivs(void);
+
 /* So basically: both state_array and builder_array will
  * have holes (which is okay because null pointers)
  * but pollfd is always fully populated, as required for poll(2)
  */
-bool debug;
 
+/* Always ensures there's at least one free slot at the end of array.
+ * Since this is "generic programming" in C we avoid unsightly casts by using
+ * actual_array = may_grow_array(&garray_info);
+ * .e.g., state_array = may_grow_array(&fd2s);
+ * XXX the way this works, we can set size arbitrarily, and call
+ * may_grow_array to get capacity to match
+ */
 void *
 may_grow_array(struct garray *a)
 {
@@ -218,18 +256,24 @@ genhash(void)
 	unsigned char binary[HASHLENGTH/2];
 	size_t i;
 	char *r;
-
-	r = emalloc(HASHLENGTH+1);
-
 #if defined(__linux__)
-	int fd = open("/dev/random", O_RDONLY);
+	int fd;
+	ssize_t n;
+
+	fd = open(RANDOM_DEVICE, O_RDONLY);
 	if (fd == -1)
 		err(1, "can't open dev/random");
-	if (read(fd, binary, sizeof(binary)) != sizeof(binary))
-		errx(1, "can't read random data");
+	n = read(fd, binary, sizeof(binary));
+	if (n == -1)
+		err(1, "can't read random data from %s", RANDOM_DEVICE);
+    	if (n != sizeof(binary))
+		errx(1, "Short read of random data from %s", RANDOM_DEVICE);
 #else
 	arc4random_buf(binary, sizeof(binary));
 #endif
+
+	r = emalloc(HASHLENGTH+1);
+	/* pretty obvious way to convert binary to hex string */
 	for (i = 0; i != HASHLENGTH; i++) {
 		r[i] = "0123456789abcdef"
 		    [i % 2 == 0 ? (binary[i/2] & 0xf) : (binary[i/2] >>4U)];
@@ -244,6 +288,7 @@ fdprintf(int fd, const char *fmt, ...)
 	char buffer[SOCKETBUFSIZE];
 	va_list ap;
 	int n;
+	ssize_t k;
 
 	va_start(ap, fmt);
 	n = vsnprintf(buffer, sizeof buffer, fmt, ap);
@@ -251,8 +296,11 @@ fdprintf(int fd, const char *fmt, ...)
 		err(1, "vnsprinf");
 	if (n > sizeof buffer)
 		errx(1, "bad use of fdprintf with a too large result");
-	if (write(fd, buffer, n) != n)
-		errx(1, "write failed");
+	k = write(fd, buffer, n);
+	if (k == -1)
+		err(1, "write failed");
+	else if (k != n)
+		errx(1, "short write, shouldn't happen");
 	va_end(ap);
 }
 
@@ -265,7 +313,6 @@ new_builder(void)
 {
 	struct builder *b;
 	size_t i;
-	builder_array = may_grow_array(&builders);
 
 	b = emalloc(sizeof(struct builder));
 	b->hash = genhash();
@@ -277,9 +324,12 @@ new_builder(void)
 	for (i = 0; i != builders.capacity; i++)
 		if (!builder_array[i])
 			break;
-	builder_array[i] = b;
 	if (i+1 > builders.size)
 		builders.size = i+1;
+
+	builder_array = may_grow_array(&builders);
+
+	builder_array[i] = b;
 
 	return i;
 }
@@ -298,7 +348,6 @@ new_fdstate(int fd)
 	state_array = may_grow_array(&fd2s);
 
 	state = emalloc(sizeof(struct fdstate));
-
 	state_array[fd] = state;
 
 	return state;
@@ -307,7 +356,7 @@ new_fdstate(int fd)
 void
 usage(void)
 {
-	fprintf(stderr, "Usage: build-server [-d] socket ...\n");
+	fprintf(stderr, "Usage: build-server [-d] [-u user] socket ...\n");
 	exit(0);
 }
 
@@ -317,8 +366,8 @@ register_server(int s)
 	struct fdstate *state;
 
 	state = new_fdstate(s);
-	state->is_server = true;
 	state->builder_idx = -1;
+	state->is_server = true;
 }
 
 void 
@@ -403,6 +452,8 @@ create_servers(const char *name)
 	}
 }
 
+/* Requires TWO parms because we need to know WHICH pollfd entry, otherwise
+ * we would have to scan. */
 void
 gc(size_t j, int fd)
 {
@@ -454,7 +505,7 @@ retrieve_line(int fd)
 }
 
 ssize_t
-find_builder_idx(char *id)
+find_builder_idx(const char *id)
 {
 	char *end;
 	long l;
@@ -466,7 +517,7 @@ find_builder_idx(char *id)
 }
 
 void
-dispatch_new_jobs(struct builder *b, char *jobs)
+dispatch_new_jobs(struct builder *b, const char *jobs)
 {
 	size_t i;
 	char *end;
@@ -622,6 +673,21 @@ handle_event(size_t j, int fd, int events)
 	}
 }
 
+void
+dropprivs(void)
+{
+	struct passwd *pw;
+
+	pw = getpwnam(setuser);
+
+	if (!pw)	
+		errx(1, "failed to find user %s", setuser);
+	if (setgroups(1, &pw->pw_gid) ||
+	    setresgid(pw->pw_gid, pw->pw_gid, pw->pw_gid) ||
+	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
+	    	err(1, "couldn't drop privileges");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -632,11 +698,13 @@ main(int argc, char *argv[])
 	int n;
 	size_t j;
 
-	while ((ch = getopt(argc, argv, "d")) != -1) {
+	while ((ch = getopt(argc, argv, "du:")) != -1) {
 		switch(ch) {
 		case 'd':
 			debug = true;
 			break;
+		case 'u':
+			setuser = optarg;
 		default:
 			usage();
 		}
@@ -649,6 +717,8 @@ main(int argc, char *argv[])
 	for (i = 0; i != argc; i++)
 		create_servers(argv[i]);
 
+	if (setuser)
+		dropprivs();
 	idx = new_builder();
 	state = new_fdstate(0);
 	state->is_server = false;
