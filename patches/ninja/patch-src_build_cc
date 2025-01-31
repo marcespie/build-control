@@ -1,0 +1,182 @@
+Index: src/build.cc
+--- src/build.cc.orig
++++ src/build.cc
+@@ -19,6 +19,11 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <functional>
++#include <poll.h>
++#include <unistd.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <netdb.h>
+ 
+ #if defined(__SVR4) && defined(__sun)
+ #include <sys/termios.h>
+@@ -510,6 +515,157 @@ bool RealCommandRunner::WaitForCommand(Result* result)
+   return true;
+ }
+ 
++struct myRealCommandRunner: public RealCommandRunner {
++	explicit myRealCommandRunner(const BuildConfig& config):
++		RealCommandRunner(config) { setup_socket(); }
++	virtual bool CanRunMore() const;
++private:
++	void setup_socket();
++	mutable int control_point;
++	mutable struct pollfd pollarray[1];
++	int connect_to(char *);
++	int connect_to_local_addr(const char *);
++	int connect_to_inet(const char *, const char *);
++	void adjust() const;
++};
++
++bool myRealCommandRunner::CanRunMore() const {
++	if (control_point != -1)
++			adjust();
++	return RealCommandRunner::CanRunMore();
++}
++
++void myRealCommandRunner::setup_socket() {
++	char *addr = getenv("BUILDCONTROLADDR");
++	char *token = getenv("BUILDTOKEN");
++	if (addr != NULL && strcmp(addr, "") != 0
++	    && token != NULL && strcmp(token, "") != 0) {
++		control_point = connect_to(addr);
++		if (control_point != -1) {
++			/* if we managed to connect, identify ourselves
++			 * to the builder.
++			 */
++			write(control_point, token, strlen(token));
++			/* Follow the full protocol, make it a full line */
++			write(control_point, "\r\n", 2);
++			pollarray[0].fd = control_point;
++			pollarray[0].events = POLLIN | POLLHUP;
++		}
++	}
++}
++
++#ifndef INFTIM
++#define INFTIM (-1)
++#endif
++
++void myRealCommandRunner::adjust() const {
++	char buffer[1024];
++	int filled = 0;
++	ssize_t n;
++	long value;
++	char *end;
++
++	/* since the messages are rather short, we assume a full 
++	 * message will always make it through.
++	 */
++	while ((n = poll(pollarray, 1, INFTIM)) == 1) {
++		if (pollarray[0].revents & POLLHUP) {
++			/* either the server went belly up or we didn't
++			 * identify properly */
++			goto error;
++		} else {
++			/* this is a bit tricky: we may have slept a 
++			 * long time, so there may be several events 
++			 * waiting for us -> keep polling/parsing job 
++			 * number lines. */
++			n = read(control_point, buffer+filled, 
++			    sizeof buffer-1-filled);
++			if (n == -1)
++				goto error;
++			filled += n;
++			buffer[filled] = 0;
++			while (filled > 0) {
++				value = strtol(buffer, &end, 10);
++				if (value < 0)
++					goto error;
++				if (*end == 0)
++					break; /* no full line */
++				/* skips thru terminators */
++				while (*end == '\r' || *end == '\n')
++					end++;
++				const_cast<BuildConfig&>(config_).parallelism = value;
++				/* and go for another round */
++				memmove(buffer, end, 
++				    sizeof buffer - (end-buffer));
++				filled -= (end-buffer);
++			}
++		}
++		continue;
++error:
++		close(control_point);
++		control_point = -1;
++		break;
++	}
++}
++
++int myRealCommandRunner::connect_to_local_addr(const char *name) {
++	struct sockaddr_un addr;
++	int s;
++
++	addr.sun_family = AF_UNIX;
++	strncpy(addr.sun_path, name, sizeof(addr.sun_path));
++
++	s = socket(AF_UNIX, SOCK_STREAM, 0);
++	if (s == -1) {
++		return -1;
++	}
++	if (connect(s, (const struct sockaddr *)&addr, sizeof(addr)) == -1) {
++		close(s);
++		return -1;
++    	}
++	return s;
++}
++
++int myRealCommandRunner::connect_to_inet(const char *server, const char *service) {
++	struct addrinfo hints, *res, *res0;
++	int error;
++	int s;
++
++	memset(&hints, 0, sizeof hints);
++	hints.ai_family = AF_UNSPEC;
++	hints.ai_socktype = SOCK_STREAM;
++
++	error = getaddrinfo(server, service, &hints, &res0);
++	if (error)
++		return -1;
++
++	for (res = res0; res; res = res->ai_next) {
++		s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
++		if (s == -1)
++			continue;
++		if (connect(s, res->ai_addr, res->ai_addrlen) == -1) {
++			close(s);
++			s = -1;
++			continue;
++		}
++		break;
++	}
++	return s;
++}
++
++int myRealCommandRunner::connect_to(char *addr) {
++	char *pos;
++
++	if (strchr(addr, '/')) {
++		return connect_to_local_addr(addr);
++	} else if ((pos = strchr(addr, ':')) != NULL) {
++		*pos = 0;
++		return connect_to_inet(addr, pos+1);
++	} else {
++		return connect_to_inet(addr, NULL);
++	}
++}
++
+ Builder::Builder(State* state, const BuildConfig& config,
+                  BuildLog* build_log, DepsLog* deps_log,
+                  DiskInterface* disk_interface, Status *status,
+@@ -608,7 +764,7 @@ bool Builder::Build(string* err) {
+     if (config_.dry_run)
+       command_runner_.reset(new DryRunCommandRunner);
+     else
+-      command_runner_.reset(new RealCommandRunner(config_));
++      command_runner_.reset(new myRealCommandRunner(config_));
+   }
+ 
+   // We are about to start the build process.
