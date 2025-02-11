@@ -18,7 +18,7 @@ Index: job.c
 RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.c,v
 diff -u -p -r1.166 job.c
 --- job.c	18 Jun 2024 02:11:03 -0000	1.166
-+++ job.c	30 Jan 2025 18:53:29 -0000
++++ job.c	11 Feb 2025 16:25:06 -0000
 @@ -93,6 +93,10 @@
  #include <stdlib.h>
  #include <string.h>
@@ -153,7 +153,7 @@ diff -u -p -r1.166 job.c
  	if (aborting || availableJobs == NULL)
  		return false;
  	else
-@@ -956,4 +982,173 @@ Job_AbortAll(void)
+@@ -956,4 +982,176 @@ Job_AbortAll(void)
  	 */
  	while (waitpid(WAIT_ANY, &foo, WNOHANG) > 0)
  		continue;
@@ -181,6 +181,7 @@ diff -u -p -r1.166 job.c
 +	char buffer[1024];
 +	int filled = 0;
 +	ssize_t n;
++	int p;
 +	long value;
 +	char *end;
 +	int timeout;
@@ -189,12 +190,14 @@ diff -u -p -r1.166 job.c
 +	 * we do it non-block. If we end up with empty allocated, we block !
 +	 * (or rather: we set timeout to a high value so we can still 
 +	 * see signals */
-+	timeout = 100;
++	timeout = 0;
 +	do {
++		if (got_fatal)
++			print_errors();
 +		/* since the messages are rather short, we assume a full 
 +		 * message will always make it through.
 +		 */
-+		while ((n = poll(pollarray, 1, timeout)) == 1) {
++		while ((p = poll(pollarray, 1, timeout)) == 1) {
 +			if (pollarray[0].revents & POLLHUP) {
 +				/* either the server went belly up or we didn't
 +				 * identify properly */
@@ -235,7 +238,7 @@ diff -u -p -r1.166 job.c
 +			break;
 +		}
 +		adjust_up();
-+		timeout = INFTIM;
++		timeout = 0;
 +	} while (allocated == 0);
 +}
 +
