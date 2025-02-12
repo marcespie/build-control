@@ -114,6 +114,7 @@ recallocarray(void *ptr, size_t oldnmemb, size_t newnmemb, size_t size)
 
 bool debug;
 char *setuser;
+bool test;
 
 #define HASHLENGTH 24
 
@@ -189,7 +190,7 @@ void *may_grow_array(struct garray *);
 void *emalloc(size_t);
 char *genhash(void);
 void fdprintf(int, const char *, ...);
-size_t new_builder(void);
+size_t new_builder(bool);
 struct fdstate *new_fdstate(int);
 void usage();
 void register_server(int);
@@ -309,13 +310,16 @@ fdprintf(int fd, const char *fmt, ...)
  * having to store it inside the builder structure
  */
 size_t
-new_builder(void)
+new_builder(bool withhash)
 {
 	struct builder *b;
 	size_t i;
 
 	b = emalloc(sizeof(struct builder));
-	b->hash = genhash();
+	if (withhash)
+		b->hash = genhash();
+	else
+		b->hash = strdup("");
 	b->jobs = -1;
 	/* XXX builders will be gc'd when refcount reaches 0 again, except
 	 * for builder 0.
@@ -356,7 +360,7 @@ new_fdstate(int fd)
 void
 usage(void)
 {
-	fprintf(stderr, "Usage: build-server [-d] [-u user] socket ...\n");
+	fprintf(stderr, "Usage: build-server [-d] [-t] [-u user] socket ...\n");
 	exit(0);
 }
 
@@ -618,6 +622,16 @@ dump(int fdout)
 }
 
 void
+ensure_builder1()
+{
+	ssize_t idx;
+	if (!builder_array[1]) {
+		idx = new_builder(false);
+		fdprintf(1, "%zd-%s\n", idx, builder_array[idx]->hash);
+	}
+}
+
+void
 handle_control_message(size_t j, int fd, int events)
 {
 	int fdout;
@@ -629,7 +643,7 @@ handle_control_message(size_t j, int fd, int events)
 	fdout = fd == 0 ? 1 : fd;
 	line = retrieve_line(fd);
 	if (strcmp(line, "new") == 0) {
-		idx = new_builder();
+		idx = new_builder(true);
 		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
 	} else if (strcmp(line, "quit") == 0) {
 		if (fdout == 1)
@@ -698,13 +712,17 @@ main(int argc, char *argv[])
 	int n;
 	size_t j;
 
-	while ((ch = getopt(argc, argv, "du:")) != -1) {
+	while ((ch = getopt(argc, argv, "dtu:")) != -1) {
 		switch(ch) {
 		case 'd':
 			debug = true;
 			break;
 		case 'u':
 			setuser = optarg;
+			break;
+		case 't':
+			test = true;
+			break;
 		default:
 			usage();
 		}
@@ -719,7 +737,7 @@ main(int argc, char *argv[])
 
 	if (setuser)
 		dropprivs();
-	idx = new_builder();
+	idx = new_builder(true);
 	state = new_fdstate(0);
 	state->is_server = false;
 	state->is_leggit = true;
@@ -731,6 +749,8 @@ main(int argc, char *argv[])
 #ifndef INFTIM	
 #define INFTIM (-1)
 #endif
+		if (test)
+			ensure_builder1();
 		n = poll(fd_array, fds.size, INFTIM);
 
 		if (n == -1)
