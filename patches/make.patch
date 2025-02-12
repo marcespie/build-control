@@ -1,9 +1,9 @@
 Index: engine.c
 ===================================================================
-RCS file: /build/data/openbsd/cvs/src/usr.bin/make/engine.c,v
+RCS file: /vide/cvs/src/usr.bin/make/engine.c,v
 diff -u -p -r1.74 engine.c
 --- engine.c	9 Apr 2024 15:08:21 -0000	1.74
-+++ engine.c	30 Jan 2025 14:34:38 -0000
++++ engine.c	12 Feb 2025 10:12:33 -0000
 @@ -579,8 +579,6 @@ handle_job_status(Job *job, int status)
  			 * JOB_IS_EXPENSIVE, perform the computation for
  			 * sequential make to figure out whether to display the
@@ -15,10 +15,10 @@ diff -u -p -r1.74 engine.c
  				printf(": %s", job->cmd);
 Index: job.c
 ===================================================================
-RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.c,v
+RCS file: /vide/cvs/src/usr.bin/make/job.c,v
 diff -u -p -r1.166 job.c
 --- job.c	18 Jun 2024 02:11:03 -0000	1.166
-+++ job.c	11 Feb 2025 16:25:06 -0000
++++ job.c	12 Feb 2025 10:34:42 -0000
 @@ -93,6 +93,10 @@
  #include <stdlib.h>
  #include <string.h>
@@ -51,21 +51,22 @@ diff -u -p -r1.166 job.c
  static volatile sig_atomic_t got_fatal;
  
  static volatile sig_atomic_t got_SIGINT, got_SIGHUP, got_SIGQUIT, got_SIGTERM, 
-@@ -151,6 +160,13 @@ static void may_remove_target(Job *);
+@@ -150,6 +159,14 @@ static void debug_vprintf(const char *, 
+ static void may_remove_target(Job *);
  static void print_error(Job *);
  static void internal_print_errors(void);
- 
++static void die_by_signal(int);
++
 +/* functions that adjust the number of jobs */
 +static void adjust_up(void);
 +static void may_adjust_jobs_goal();
 +static int connect_to_local_addr(const char *);
 +static int connect_to_inet(const char *, const char *);
 +static int connect_to(char *);
-+
+ 
  static int dying_signal = 0;
  
- const char *	basedirectory = NULL;
-@@ -273,6 +289,7 @@ print_error(Job *j)
+@@ -273,6 +290,7 @@ print_error(Job *j)
  	Buf_Destroy(&buf);
  	free(j->cmd);
  }
@@ -73,7 +74,7 @@ diff -u -p -r1.166 job.c
  static void
  quick_summary(int signo)
  {
-@@ -540,8 +557,14 @@ postprocess_job(Job *job)
+@@ -540,8 +558,14 @@ postprocess_job(Job *job)
  		job->next = errorJobs;
  		errorJobs = job;
  	} else {
@@ -90,7 +91,7 @@ diff -u -p -r1.166 job.c
  	}
  
  	if (errorJobs != NULL && aborting != ABORT_INTERRUPT)
-@@ -658,7 +681,7 @@ may_continue_job(Job *job)
+@@ -658,7 +682,7 @@ may_continue_job(Job *job)
  		bool finished = job_run_next(job);
  		if (finished)
  			postprocess_job(job);
@@ -99,7 +100,7 @@ diff -u -p -r1.166 job.c
  			determine_expensive_job(job);
  	}
  }
-@@ -753,6 +776,8 @@ reap_jobs(void)
+@@ -753,6 +777,8 @@ reap_jobs(void)
  	bool reaped = false;
  	Job *job;
  
@@ -108,7 +109,7 @@ diff -u -p -r1.166 job.c
  	while ((pid = waitpid(WAIT_ANY, &status, WNOHANG)) > 0) {
  		if (WIFSTOPPED(status))
  			continue;
-@@ -817,26 +842,25 @@ loop_handle_running_jobs(void)
+@@ -817,26 +843,25 @@ loop_handle_running_jobs(void)
  		handle_running_jobs();
  }
  
@@ -144,7 +145,7 @@ diff -u -p -r1.166 job.c
  	mypid = getpid();
  
  	aborting = 0;
-@@ -846,6 +870,8 @@ Job_Init(int maxJobs)
+@@ -846,6 +871,8 @@ Job_Init(int maxJobs)
  bool
  can_start_job(void)
  {
@@ -153,7 +154,20 @@ diff -u -p -r1.166 job.c
  	if (aborting || availableJobs == NULL)
  		return false;
  	else
-@@ -956,4 +982,176 @@ Job_AbortAll(void)
+@@ -894,6 +921,12 @@ handle_fatal_signal(int signo)
+ 	loop_handle_running_jobs();
+ 	internal_print_errors();
+ 
++	die_by_signal(signo);
++}
++
++static void
++die_by_signal(int signo)
++{
+ 	/* die by that signal */
+ 	sigprocmask(SIG_BLOCK, &sigset, NULL);
+ 	signal(signo, SIG_DFL);
+@@ -956,4 +989,178 @@ Job_AbortAll(void)
  	 */
  	while (waitpid(WAIT_ANY, &foo, WNOHANG) > 0)
  		continue;
@@ -192,8 +206,10 @@ diff -u -p -r1.166 job.c
 +	 * see signals */
 +	timeout = 0;
 +	do {
-+		if (got_fatal)
++		if (allocated == 0 && check_dying_signal()) {
 +			print_errors();
++			die_by_signal(check_dying_signal());
++		}
 +		/* since the messages are rather short, we assume a full 
 +		 * message will always make it through.
 +		 */
@@ -332,10 +348,10 @@ diff -u -p -r1.166 job.c
  }
 Index: job.h
 ===================================================================
-RCS file: /build/data/openbsd/cvs/src/usr.bin/make/job.h,v
+RCS file: /vide/cvs/src/usr.bin/make/job.h,v
 diff -u -p -r1.39 job.h
 --- job.h	21 May 2024 05:00:48 -0000	1.39
-+++ job.h	30 Jan 2025 14:34:38 -0000
++++ job.h	12 Feb 2025 10:12:33 -0000
 @@ -96,7 +96,6 @@ extern void debug_job_printf(const char 
  extern int check_dying_signal(void);
  
@@ -347,10 +363,10 @@ diff -u -p -r1.39 job.h
  #endif /* _JOB_H_ */
 Index: main.c
 ===================================================================
-RCS file: /build/data/openbsd/cvs/src/usr.bin/make/main.c,v
+RCS file: /vide/cvs/src/usr.bin/make/main.c,v
 diff -u -p -r1.133 main.c
 --- main.c	18 Jun 2024 02:11:03 -0000	1.133
-+++ main.c	30 Jan 2025 14:34:38 -0000
++++ main.c	12 Feb 2025 10:12:33 -0000
 @@ -706,6 +706,7 @@ main(int argc, char **argv)
  	Var_Set("MACHINE", machine);
  	Var_Set("MACHINE_ARCH", machine_arch);
