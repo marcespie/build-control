@@ -201,10 +201,10 @@ void gc(size_t, int);
 char *retrieve_line(int);
 ssize_t find_builder_idx(const char *);
 void dispatch_new_jobs(struct builder *, const char *);
-void setup_new_connection(int, int);
-void authentify_connection(size_t, int, int, struct fdstate *);
+void setup_new_connection(int);
+void authentify_connection(size_t, int, struct fdstate *);
 void dump(int);
-void handle_control_message(size_t, int, int);
+void handle_control_message(size_t, int);
 void handle_event(size_t, int, int);
 void dropprivs(void);
 
@@ -540,7 +540,7 @@ dispatch_new_jobs(struct builder *b, const char *jobs)
 }
 
 void
-setup_new_connection(int fd, int events)
+setup_new_connection(int fd)
 {
 	struct sockaddr_storage addr;
 	socklen_t len;
@@ -560,7 +560,7 @@ setup_new_connection(int fd, int events)
 }
 
 void
-authentify_connection(size_t j, int fd, int events, struct fdstate *state)
+authentify_connection(size_t j, int fd, struct fdstate *state)
 {
 	char *line;
 	char *dash;
@@ -632,7 +632,7 @@ ensure_builder1()
 }
 
 void
-handle_control_message(size_t j, int fd, int events)
+handle_control_message(size_t j, int fd)
 {
 	int fdout;
 	char *line;
@@ -679,11 +679,11 @@ handle_event(size_t j, int fd, int events)
 	if (events & POLLHUP) {
 		gc(j, fd);
 	} else if (state->is_server) {
-		setup_new_connection(fd, events);
+		setup_new_connection(fd);
 	} else if (!state->is_leggit) {
-		authentify_connection(j, fd, events, state);
+		authentify_connection(j, fd, state);
 	} else if (state->builder_idx == 0) {
-		handle_control_message(j, fd, events);
+		handle_control_message(j, fd);
 	}
 }
 
