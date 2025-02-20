@@ -642,6 +642,8 @@ handle_control_message(size_t j, int fd)
 
 	fdout = fd == 0 ? 1 : fd;
 	line = retrieve_line(fd);
+	if (!line)
+		return;
 	if (strcmp(line, "new") == 0) {
 		idx = new_builder(true);
 		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
@@ -653,8 +655,10 @@ handle_control_message(size_t j, int fd)
 		dump(fdout);
 	} else {
 		pos = strchr(line, ':');
-		if (!pos)
+		if (!pos) {
+			fdprintf(fdout, "I don't understand %s\n", line);
 			return;
+		}
 		*pos = 0;
 		idx = find_builder_idx(line);
 		if (idx == -1) {
