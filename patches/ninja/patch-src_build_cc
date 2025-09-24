@@ -73,7 +73,7 @@ Index: src/build.cc
 +	/* since the messages are rather short, we assume a full 
 +	 * message will always make it through.
 +	 */
-+	while ((n = poll(pollarray, 1, INFTIM)) == 1) {
++	while ((n = poll(pollarray, 1, 0)) == 1) {
 +		if (pollarray[0].revents & POLLHUP) {
 +			/* either the server went belly up or we didn't
 +			 * identify properly */
