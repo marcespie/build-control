@@ -13,7 +13,7 @@ Index: src/build.cc
  
  #if defined(__SVR4) && defined(__sun)
  #include <sys/termios.h>
-@@ -510,6 +515,157 @@ bool RealCommandRunner::WaitForCommand(Result* result)
+@@ -510,6 +515,160 @@ bool RealCommandRunner::WaitForCommand(Result* result)
    return true;
  }
  
@@ -34,12 +34,15 @@ Index: src/build.cc
 +bool myRealCommandRunner::CanRunMore() const {
 +	if (control_point != -1)
 +			adjust();
-+	return RealCommandRunner::CanRunMore();
++	size_t subproc_number =
++	    subprocs_.running_.size() + subprocs_.finished_.size();
++	return (int)subproc_number < config_.parallelism;
 +}
 +
 +void myRealCommandRunner::setup_socket() {
 +	char *addr = getenv("BUILDCONTROLADDR");
 +	char *token = getenv("BUILDTOKEN");
++	control_point = -1;
 +	if (addr != NULL && strcmp(addr, "") != 0
 +	    && token != NULL && strcmp(token, "") != 0) {
 +		control_point = connect_to(addr);
@@ -171,7 +174,7 @@ Index: src/build.cc
  Builder::Builder(State* state, const BuildConfig& config,
                   BuildLog* build_log, DepsLog* deps_log,
                   DiskInterface* disk_interface, Status *status,
-@@ -608,7 +764,7 @@ bool Builder::Build(string* err) {
+@@ -608,7 +767,7 @@ bool Builder::Build(string* err) {
      if (config_.dry_run)
        command_runner_.reset(new DryRunCommandRunner);
      else
