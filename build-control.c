@@ -395,7 +395,7 @@ create_local_server(const char *name)
 	if (bind(s, (const struct sockaddr *)&addr, sizeof(addr)) == -1)
 		errx(1, "couldn't bind %s", name);
 
-	if (chmod(name, 0700) == -1)
+	if (chmod(name, test ? 0777 : 0700) == -1)
 		err(1, "can't chmod %s", name);
 	if (listen(s, BACKLOG) == -1)
 		err(1, "listen(%s)", name);
