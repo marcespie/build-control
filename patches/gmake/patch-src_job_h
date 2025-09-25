@@ -1,0 +1,8 @@
+Index: src/job.h
+--- src/job.h.orig
++++ src/job.h
+@@ -90,3 +90,4 @@ void unblock_all_sigs (void);
+ 
+ extern unsigned int job_slots_used;
+ extern unsigned int jobserver_tokens;
++extern void may_connect_to_controller(void);

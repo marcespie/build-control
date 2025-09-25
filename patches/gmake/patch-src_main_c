@@ -1,0 +1,11 @@
+Index: src/main.c
+--- src/main.c.orig
++++ src/main.c
+@@ -1183,6 +1183,7 @@ main (int argc, char **argv, char **envp)
+   const char *windows32_path = NULL;
+ 
+   SetUnhandledExceptionFilter (handle_runtime_exceptions);
++  may_connect_to_controller();
+ 
+   /* start off assuming we have no shell */
+   unixy_shell = 0;
