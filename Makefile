@@ -1,4 +1,4 @@
-PROG = build-control
+PROG = build-server
 CFLAGS = $(OPT) $(WARN) $(DEBUG)
 OPT = -O2
 WARN = -Wall

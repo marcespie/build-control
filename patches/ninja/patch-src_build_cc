@@ -40,7 +40,7 @@ Index: src/build.cc
 +}
 +
 +void myRealCommandRunner::setup_socket() {
-+	char *addr = getenv("BUILDCONTROLADDR");
++	char *addr = getenv("BUILDSOCKET");
 +	char *token = getenv("BUILDTOKEN");
 +	control_point = -1;
 +	if (addr != NULL && strcmp(addr, "") != 0

@@ -1,0 +1,79 @@
+.\"	$OpenBSD$
+.\"
+.\" Copyright (c) 2025 Marc Espie <espie@openbsd.org>
+.\" 
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\" 
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\" 
+.Dd $Mdocdate$
+.Dt BUILD-SERVER 1
+.Os
+.Sh NAME
+.Nm build-server
+.Nd example implementation of the buildcontrol protocol
+.Sh SYNOPSIS
+.Nm build-server
+.Op Fl dt
+.Op Fl u Ar user
+.Ar socket ...
+.Sh DESCRIPTION
+The
+.Nm
+implements the buildcontrol protocol.
+It takes at least one
+.Ar socket
+parameter for the server socket, of the form
+.Pa filesystem_path
+(Unix socket) or
+.Li machine:port
+.Po 
+internet socket as parsed by
+.Xr getaddrinfo 3
+.Pc .
+.Pp
+The options are as follows:
+.Bl -tag -width Uuserxxxx
+.It Fl d
+debug mode, way more verbose,
+.It Fl t
+test mode, automatically creates a builder, leave the hash tokens empty,
+and make the local socket read/write for everyone,
+.It Fl u Ar user
+changes ownership of local socket.
+.El
+.Pp
+Once started, the server can be contacted from another program, using the
+0-token string printed on stdout, or directly controlled from the command line.
+.Pp
+Commands are as follows:
+.Bl -tag -width Ds -offset indent
+.It Cm new
+creates a new builder instance, with
+.Ev BUILDTOKEN
+n-hash
+.It Cm dump
+dumps every known connection
+.It Ar n Ns : Ns Ar jobs
+changes the number of jobs of builder 
+.Ar n 
+to 
+.Ar jobs .
+.It Cm quit
+quits
+.El
+.Pp
+Note that builders stay around until a build program connects to them, and are automatically garbage collected as soon as the last connection ends.
+.Pp
+In case of a failed build, user will need to instantiate a new builder.
+.Sh SEE ALSO
+.Xr make 1
+.Xr ninja 1

@@ -360,8 +360,8 @@ new_fdstate(int fd)
 void
 usage(void)
 {
-	fprintf(stderr, "Usage: build-server [-d] [-t] [-u user] socket ...\n");
-	exit(0);
+	fprintf(stderr, "Usage: build-server [-dt] [-u user] socket ...\n");
+	exit(1);
 }
 
 void
@@ -632,6 +632,18 @@ ensure_builder1()
 }
 
 void
+manual(int fd)
+{
+	fdprintf(fd, "Recognized commands:\n");
+	fdprintf(fd, "\tnew\tcreate new builder, returns n-token\n");
+	fdprintf(fd, 
+	    "\t    (env params BUILDSOCKET=socket BUILDTOKEN=n-token)\n");
+	fdprintf(fd, "\tdump\tdumps the status of all fds\n");
+	fdprintf(fd, "\tn:jobs\tadjust jobs for builder #n\n");
+	fdprintf(fd, "\tquit\n");
+}
+
+void
 handle_control_message(size_t j, int fd)
 {
 	int fdout;
@@ -647,6 +659,8 @@ handle_control_message(size_t j, int fd)
 	if (strcmp(line, "new") == 0) {
 		idx = new_builder(true);
 		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
+	} else if (strcmp(line, "?") == 0 || strcmp(line, "help") == 0) {
+		manual(fdout);
 	} else if (strcmp(line, "quit") == 0) {
 		if (fdout == 1)
 			exit(0);
@@ -657,6 +671,7 @@ handle_control_message(size_t j, int fd)
 		pos = strchr(line, ':');
 		if (!pos) {
 			fdprintf(fdout, "I don't understand %s\n", line);
+			manual(fdout);
 			return;
 		}
 		*pos = 0;
@@ -735,7 +750,7 @@ main(int argc, char *argv[])
 	argv += optind;
 
 	if (argc < 1)
-		errx(1, "usage: build-control socketaddr...");
+		usage();
 	for (i = 0; i != argc; i++)
 		create_servers(argv[i]);
 

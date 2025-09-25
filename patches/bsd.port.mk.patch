@@ -1,0 +1,16 @@
+Index: bsd.port.mk
+===================================================================
+RCS file: /vide/cvs/ports/infrastructure/mk/bsd.port.mk,v
+diff -u -p -r1.1645 bsd.port.mk
+--- bsd.port.mk	30 Jul 2025 12:06:30 -0000	1.1645
++++ bsd.port.mk	24 Sep 2025 12:40:04 -0000
+@@ -448,6 +448,9 @@ CONFIGURE_ENV += LIBTOOL="${_LIBTOOL}" $
+ MAKE_ENV += LIBTOOL="${_LIBTOOL}" ${_lt_libs}
+ MAKE_FLAGS += LIBTOOL="${_LIBTOOL}" ${_lt_libs}
+ .endif
++.if defined(BUILDSOCKET) && defined(BUILDTOKEN)
++MAKE_ENV += BUILDSOCKET=${BUILDSOCKET} BUILDTOKEN=${BUILDTOKEN}
++.endif
+ # log for the SHARED_LIBS override
+ MAKE_FLAGS += SHARED_LIBS_LOG=${WRKBUILD}/shared_libs.log
+ 

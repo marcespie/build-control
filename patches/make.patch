@@ -329,7 +329,7 @@ diff -u -p -r1.166 job.c
 +void
 +may_connect_to_controller(void)
 +{
-+	char *addr = getenv("BUILDCONTROLADDR");
++	char *addr = getenv("BUILDSOCKET");
 +	char *token = getenv("BUILDTOKEN");
 +	if (addr != NULL && strcmp(addr, "") != 0
 +	    && token != NULL && strcmp(token, "") != 0) {
