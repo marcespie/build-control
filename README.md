@@ -5,7 +5,7 @@ Proof-of-concept and framework for pervasive computing
 
 - the controller is the server
 when you want to control a build program, you pass
-BUILDCONTROLADDR=socket-addr
+BUILDSOCKET=socket-addr
 BUILDTOKEN=unique-hash
 
 The socket address can be a local path (unix domain)

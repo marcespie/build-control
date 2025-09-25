@@ -435,12 +435,11 @@ create_inet_server(const char *server, const char *service)
 void
 create_servers(const char *name)
 {
-	if (strchr(name, '/')) {
+	char *pos = strchr(name, ':');
+	if (!pos) {
 		create_local_server(name);
 	} else {
-		char *pos;
-		pos = strchr(name, ':');
-		if (pos != NULL) {
+		if (pos != name) {
 			size_t len;
 			char *server;
 
@@ -451,7 +450,7 @@ create_servers(const char *name)
 			create_inet_server(server, pos+1);
 			free(server);
 		} else {
-			create_inet_server(name, 0);
+			create_inet_server(0, name+1);
 		}
 	}
 }
