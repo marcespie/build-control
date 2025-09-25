@@ -6,16 +6,18 @@ DEBUG =
 
 DEST =
 
-SRCS = build.control.c
+SRCS = build-server.c
 OBJS = ${SRCS:.c=.o}
 
 BINMODE = 0555
 BINDIR = /usr/local/bin
+MANDIR = /usr/local/man
 
 all:	${PROG}
 
 install: ${PROG}
-	install -m ${BINMODE} build-control ${DESTDIR}${BINDIR}/build-control
+	install -m ${BINMODE} build-server ${DESTDIR}${BINDIR}
+	install -m ${BINMODE} build-server.1 ${DESTDIR}${MANDIR}/man1
 	
 
 
