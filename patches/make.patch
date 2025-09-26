@@ -1,9 +1,9 @@
 Index: engine.c
 ===================================================================
-RCS file: /vide/cvs/src/usr.bin/make/engine.c,v
+RCS file: /home/espie/cvs/src/usr.bin/make/engine.c,v
 diff -u -p -r1.74 engine.c
 --- engine.c	9 Apr 2024 15:08:21 -0000	1.74
-+++ engine.c	12 Feb 2025 10:12:33 -0000
++++ engine.c	26 Sep 2025 16:13:44 -0000
 @@ -579,8 +579,6 @@ handle_job_status(Job *job, int status)
  			 * JOB_IS_EXPENSIVE, perform the computation for
  			 * sequential make to figure out whether to display the
@@ -15,10 +15,10 @@ diff -u -p -r1.74 engine.c
  				printf(": %s", job->cmd);
 Index: job.c
 ===================================================================
-RCS file: /vide/cvs/src/usr.bin/make/job.c,v
+RCS file: /home/espie/cvs/src/usr.bin/make/job.c,v
 diff -u -p -r1.166 job.c
 --- job.c	18 Jun 2024 02:11:03 -0000	1.166
-+++ job.c	12 Feb 2025 10:34:42 -0000
++++ job.c	26 Sep 2025 19:24:38 -0000
 @@ -93,6 +93,10 @@
  #include <stdlib.h>
  #include <string.h>
@@ -167,7 +167,7 @@ diff -u -p -r1.166 job.c
  	/* die by that signal */
  	sigprocmask(SIG_BLOCK, &sigset, NULL);
  	signal(signo, SIG_DFL);
-@@ -956,4 +989,178 @@ Job_AbortAll(void)
+@@ -956,4 +989,177 @@ Job_AbortAll(void)
  	 */
  	while (waitpid(WAIT_ANY, &foo, WNOHANG) > 0)
  		continue;
@@ -314,11 +314,10 @@ diff -u -p -r1.166 job.c
 +static int
 +connect_to(char *addr)
 +{
-+	char *pos;
-+
-+	if (strchr(addr, '/')) {
++	char *pos = strchr(addr, ':');
++	if (!pos) {
 +		return connect_to_local_addr(addr);
-+	} else if ((pos = strchr(addr, ':')) != NULL) {
++	} else if (pos != addr) {
 +		*pos = 0;
 +		return connect_to_inet(addr, pos+1);
 +	} else {
@@ -348,10 +347,10 @@ diff -u -p -r1.166 job.c
  }
 Index: job.h
 ===================================================================
-RCS file: /vide/cvs/src/usr.bin/make/job.h,v
+RCS file: /home/espie/cvs/src/usr.bin/make/job.h,v
 diff -u -p -r1.39 job.h
 --- job.h	21 May 2024 05:00:48 -0000	1.39
-+++ job.h	12 Feb 2025 10:12:33 -0000
++++ job.h	26 Sep 2025 16:13:44 -0000
 @@ -96,7 +96,6 @@ extern void debug_job_printf(const char 
  extern int check_dying_signal(void);
  
@@ -363,10 +362,10 @@ diff -u -p -r1.39 job.h
  #endif /* _JOB_H_ */
 Index: main.c
 ===================================================================
-RCS file: /vide/cvs/src/usr.bin/make/main.c,v
+RCS file: /home/espie/cvs/src/usr.bin/make/main.c,v
 diff -u -p -r1.133 main.c
 --- main.c	18 Jun 2024 02:11:03 -0000	1.133
-+++ main.c	12 Feb 2025 10:12:33 -0000
++++ main.c	26 Sep 2025 16:13:44 -0000
 @@ -706,6 +706,7 @@ main(int argc, char **argv)
  	Var_Set("MACHINE", machine);
  	Var_Set("MACHINE_ARCH", machine_arch);
