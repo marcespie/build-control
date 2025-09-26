@@ -13,7 +13,7 @@ new
 1-6f53946e9ead7cac9f4e4b2d <- that's the token
 
 you want to
-export BUILDCONTROLADDR=/tmp/mycontrolsocket
+export BUILDSOCKET=/tmp/mycontrolsocket
 export BUILDTOKEN=1-6f53946e9ead7cac9f4e4b2d
 
 and start your make (very important, HAS to have -j, even -j1)

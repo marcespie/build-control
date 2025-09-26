@@ -115,6 +115,8 @@ recallocarray(void *ptr, size_t oldnmemb, size_t newnmemb, size_t size)
 bool debug;
 char *setuser;
 bool test;
+bool lazy;
+char *mainserver;
 
 #define HASHLENGTH 24
 
@@ -196,7 +198,7 @@ void usage();
 void register_server(int);
 void create_local_server(const char *);
 void create_inet_server(const char *, const char *);
-void create_servers(const char *);
+void create_server(const char *);
 void gc(size_t, int);
 char *retrieve_line(int);
 ssize_t find_builder_idx(const char *);
@@ -207,6 +209,7 @@ void dump(int);
 void handle_control_message(size_t, int);
 void handle_event(size_t, int, int);
 void dropprivs(void);
+void show_token(int, ssize_t);
 
 /* So basically: both state_array and builder_array will
  * have holes (which is okay because null pointers)
@@ -360,7 +363,7 @@ new_fdstate(int fd)
 void
 usage(void)
 {
-	fprintf(stderr, "Usage: build-server [-dt] [-u user] socket ...\n");
+	fprintf(stderr, "Usage: build-server [-dlt] [-u user] socket ...\n");
 	exit(1);
 }
 
@@ -433,7 +436,7 @@ create_inet_server(const char *server, const char *service)
 }
 
 void
-create_servers(const char *name)
+create_server(const char *name)
 {
 	char *pos = strchr(name, ':');
 	if (!pos) {
@@ -621,12 +624,21 @@ dump(int fdout)
 }
 
 void
+show_token(int fdout, ssize_t idx)
+{
+	if (lazy)
+		fdprintf(fdout, "BUILDSOCKET=%s BUILDTOKEN=%zd-%s\n", 
+		    mainserver, idx, builder_array[idx]->hash);
+	else 
+		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
+}
+void
 ensure_builder1()
 {
 	ssize_t idx;
 	if (!builder_array[1]) {
 		idx = new_builder(false);
-		fdprintf(1, "%zd-%s\n", idx, builder_array[idx]->hash);
+		show_token(1, idx);
 	}
 }
 
@@ -657,7 +669,7 @@ handle_control_message(size_t j, int fd)
 		return;
 	if (strcmp(line, "new") == 0) {
 		idx = new_builder(true);
-		fdprintf(fdout, "%zd-%s\n", idx, builder_array[idx]->hash);
+		show_token(fdout, idx);
 	} else if (strcmp(line, "?") == 0 || strcmp(line, "help") == 0) {
 		manual(fdout);
 	} else if (strcmp(line, "quit") == 0) {
@@ -730,10 +742,13 @@ main(int argc, char *argv[])
 	int n;
 	size_t j;
 
-	while ((ch = getopt(argc, argv, "dtu:")) != -1) {
+	while ((ch = getopt(argc, argv, "ldtu:")) != -1) {
 		switch(ch) {
 		case 'd':
 			debug = true;
+			break;
+		case 'l':
+			lazy = true;
 			break;
 		case 'u':
 			setuser = optarg;
@@ -750,8 +765,9 @@ main(int argc, char *argv[])
 
 	if (argc < 1)
 		usage();
+	mainserver = strdup(argv[0]);
 	for (i = 0; i != argc; i++)
-		create_servers(argv[i]);
+		create_server(argv[i]);
 
 	if (setuser)
 		dropprivs();
@@ -761,7 +777,7 @@ main(int argc, char *argv[])
 	state->is_leggit = true;
 	state->builder_idx = idx;
 
-	printf("0-%s to connect\n", builder_array[idx]->hash);
+	show_token(1, 0);
 
 	while (1) { /* classic poll loop */
 #ifndef INFTIM	

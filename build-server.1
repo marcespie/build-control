@@ -22,7 +22,7 @@
 .Nd example implementation of the buildcontrol protocol
 .Sh SYNOPSIS
 .Nm build-server
-.Op Fl dt
+.Op Fl dlt
 .Op Fl u Ar user
 .Ar socket ...
 .Sh DESCRIPTION
@@ -44,6 +44,8 @@ The options are as follows:
 .Bl -tag -width Uuserxxxx
 .It Fl d
 debug mode, way more verbose,
+.It Fl l
+lazy option, show env variables to copy-paste to start the new build
 .It Fl t
 test mode, automatically creates a builder, leave the hash tokens empty,
 and make the local socket read/write for everyone,
