@@ -13,7 +13,7 @@ Index: src/build.cc
  
  #if defined(__SVR4) && defined(__sun)
  #include <sys/termios.h>
-@@ -510,6 +515,160 @@ bool RealCommandRunner::WaitForCommand(Result* result)
+@@ -510,6 +515,159 @@ bool RealCommandRunner::WaitForCommand(Result* result)
    return true;
  }
  
@@ -159,11 +159,10 @@ Index: src/build.cc
 +}
 +
 +int myRealCommandRunner::connect_to(char *addr) {
-+	char *pos;
-+
-+	if (strchr(addr, '/')) {
++	char *pos = strchr(addr, ':');
++	if (!pos) {
 +		return connect_to_local_addr(addr);
-+	} else if ((pos = strchr(addr, ':')) != NULL) {
++	} else if (pos != addr) {
 +		*pos = 0;
 +		return connect_to_inet(addr, pos+1);
 +	} else {
@@ -174,7 +173,7 @@ Index: src/build.cc
  Builder::Builder(State* state, const BuildConfig& config,
                   BuildLog* build_log, DepsLog* deps_log,
                   DiskInterface* disk_interface, Status *status,
-@@ -608,7 +767,7 @@ bool Builder::Build(string* err) {
+@@ -608,7 +766,7 @@ bool Builder::Build(string* err) {
      if (config_.dry_run)
        command_runner_.reset(new DryRunCommandRunner);
      else

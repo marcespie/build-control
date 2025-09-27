@@ -43,7 +43,7 @@ Index: src/job.c
      /* Since there is only one job slot, make things run linearly.
         Wait for the child to die, setting the state to 'cs_finished'.  */
      while (file->command_state == cs_running)
-@@ -3826,3 +3839,151 @@ dup2 (int old, int new)
+@@ -3826,3 +3839,150 @@ dup2 (int old, int new)
  #ifdef VMS
  #include "vmsjobs.c"
  #endif
@@ -163,11 +163,10 @@ Index: src/job.c
 +static int
 +connect_to(char *addr)
 +{
-+	char *pos;
-+
-+	if (strchr(addr, '/')) {
++	char *pos = strchr(addr, ':');
++	if (!pos) {
 +		return connect_to_local_addr(addr);
-+	} else if ((pos = strchr(addr, ':')) != NULL) {
++	} else if (pos != addr) {
 +		*pos = 0;
 +		return connect_to_inet(addr, pos+1);
 +	} else {
